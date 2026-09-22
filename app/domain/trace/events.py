@@ -10,10 +10,15 @@ class EventType(str, Enum):
     FUNCTION_RETURN = "function_return"
     FUNCTION_THROW = "function_throw"
 
-    # Network
+    # Network & Response Handling
     NETWORK_REQUEST = "network_request"
     NETWORK_RESPONSE = "network_response"
     NETWORK_FAILED = "network_failed"
+    RESPONSE_CONSUMED = "response_consumed"
+    RESPONSE_FIELD_READ = "response_field_read"
+
+    # Cryptography
+    CRYPTO_OPERATION = "crypto_operation"
 
     # Storage
     STORAGE_READ = "storage_read"

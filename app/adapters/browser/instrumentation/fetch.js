@@ -83,10 +83,12 @@
 
     try {
       const response = await originalFetch.apply(this, args);
+      response.__api_lineage_req_id__ = requestId;
 
       // Clone response to inspect body without consuming the stream
       try {
         const clone = response.clone();
+        clone.__api_lineage_internal_clone__ = true;
         clone
           .text()
           .then((text) => {
@@ -127,4 +129,84 @@
       throw err;
     }
   };
+
+  function wrapWithLineageProxy(target, requestId, originStack) {
+    if (target === null || typeof target !== "object") return target;
+
+    try {
+      return new Proxy(target, {
+        get(obj, prop, receiver) {
+          if (typeof prop === "symbol" || prop === "toJSON" || prop === "then") {
+            return Reflect.get(obj, prop, receiver);
+          }
+
+          const accessStack = new Error().stack;
+          const val = obj[prop];
+
+          emitBridgeEvent(
+            "response_field_read",
+            {
+              request_id: requestId,
+              field: String(prop),
+              value_preview: val !== undefined && val !== null ? String(val).slice(0, 256) : null,
+            },
+            accessStack
+          );
+
+          if (val !== null && typeof val === "object") {
+            return wrapWithLineageProxy(val, requestId, originStack);
+          }
+          return val;
+        },
+      });
+    } catch (e) {
+      return target;
+    }
+  }
+
+  // Hook Response prototype methods to capture consumer functions
+  if (typeof Response !== "undefined" && Response.prototype) {
+    const originalJson = Response.prototype.json;
+    const originalText = Response.prototype.text;
+
+    Response.prototype.json = async function () {
+      const handlerStack = new Error().stack;
+      const requestId = this.__api_lineage_req_id__ || "unknown_req";
+
+      const data = await originalJson.apply(this, arguments);
+
+      emitBridgeEvent(
+        "response_consumed",
+        {
+          request_id: requestId,
+          format: "json",
+          data_keys: data && typeof data === "object" ? Object.keys(data) : [],
+        },
+        handlerStack
+      );
+
+      return wrapWithLineageProxy(data, requestId, handlerStack);
+    };
+
+    Response.prototype.text = async function () {
+      const handlerStack = new Error().stack;
+      const requestId = this.__api_lineage_req_id__ || "unknown_req";
+
+      const text = await originalText.apply(this, arguments);
+
+      if (!this.__api_lineage_internal_clone__) {
+        emitBridgeEvent(
+          "response_consumed",
+          {
+            request_id: requestId,
+            format: "text",
+            length: text ? text.length : 0,
+          },
+          handlerStack
+        );
+      }
+
+      return text;
+    };
+  }
 })();

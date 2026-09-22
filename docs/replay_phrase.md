@@ -1754,10 +1754,71 @@ Trả về execution preview:
 
 JSON
 
-```
+```json
 {
   "plan_id": "plan-001",
   "estimated_steps": 8,
   "potential_requests": 12,
-  "
+  "requires_approval": true
+}
 ```
+
+---
+
+# 18. Báo Cáo Triển Khai Hoàn Thành Thực Tế (Implementation Report)
+
+Phase 3: **Replay Engine & Code Synthesis** đã được hoàn thiện toàn diện, kế thừa trực tiếp hợp đồng bàn giao `ReplaySpec` từ Phase 2 và tổ chức theo tiêu chuẩn Clean Architecture & DRY.
+
+## 18.1. Sơ Đồ Kiến Trúc
+
+```
+app/
+├── domain/replay/
+│   ├── entities.py              # ReplayMode, ReplayRequest, ReplayExecutionResult, ReplayComparison, SynthesizedCode
+│   └── policies.py              # ReplaySafetyPolicy, VariableResolver (nội suy {{var}}, timestamp, nonce)
+├── ports/
+│   └── replay.py                # HTTPReplayExecutorPort, CodeSynthesizerPort
+├── adapters/
+│   ├── replay/
+│   │   └── http_client.py       # HttpxReplayExecutor (sử dụng httpx.AsyncClient độc lập, đo latency)
+│   └── synthesis/
+│       └── code_synthesizer.py  # CodeSynthesizer (Python httpx, cURL bash, TypeScript fetch)
+├── application/replay/
+│   ├── prepare_replay.py        # PrepareReplayUseCase (biến đổi ReplaySpec thành ReplayRequest)
+│   ├── compare_responses.py     # CompareResponsesUseCase (so sánh vi phân status, headers, json diff)
+│   ├── execute_replay.py        # ExecuteReplayUseCase (điều phối DRY_RUN và EXECUTE + so sánh baseline)
+│   └── synthesize_code.py       # SynthesizeCodeUseCase (sinh mã nguồn tự động)
+└── interfaces/mcp/tools/
+    └── replay.py                # MCP tools: prepare_replay_tool, execute_replay_tool, synthesize_code_tool
+```
+
+## 18.2. Các Tính Năng Đã Triển Khai
+
+1. **Replay Modes:**
+   - `DRY_RUN`: Chuẩn bị request, nội suy biến, kiểm tra an toàn mà không phát sinh lưu lượng mạng ra ngoài.
+   - `EXECUTE`: Gửi request thực tế qua HTTP client độc lập, đo đạc latency, đọc baseline từ `network_responses` và thực hiện so sánh vi phân.
+   - `EXPLORATORY`: Thử nghiệm các biến đầu vào khác nhau để phân tích sự thay đổi phản hồi.
+2. **Dynamic Variable Resolution (`VariableResolver`):**
+   - Thay thế các placeholder `{{var}}` trong URL, Headers, và Body.
+   - Hỗ trợ điền giá trị người dùng nhập (`user_inputs`).
+   - Tự động sinh `timestamp` dạng epoch millisecond và `nonce` / `uuid` nếu không được truyền vào.
+3. **Safety Guard & Policies (`ReplaySafetyPolicy`):**
+   - Whitelist host (`allowed_hosts`), kiểm tra HTTP Method được phép, bảo vệ chống side-effects ngoài ý muốn (trả về 403 / 405 nếu vi phạm).
+4. **Automated Response Comparison (`CompareResponsesUseCase`):**
+   - So sánh status code, content-type.
+   - So sánh có cấu trúc cho JSON body: phát hiện missing keys, extra keys, type mismatches.
+   - Tính toán chỉ số tương đồng `match_score` (từ 0.0 đến 1.0).
+5. **Multi-Language Code Synthesis (`CodeSynthesizer`):**
+   - **Python (`httpx`):** Hàm `async def execute_request(...)` hoàn chỉnh, typed arguments, docstring chi tiết nguồn gốc Lineage từng tham số, tự đóng connection an toàn. Cú pháp được kiểm chứng hợp lệ bằng AST parser.
+   - **cURL:** Lệnh bash curl nhiều dòng với đầy đủ headers và escaped payload.
+   - **TypeScript (`fetch`):** TypeScript interface và async function `executeRequest` chuẩn ES module.
+6. **MCP Tools Interface:**
+   - Cung cấp 3 tool chuẩn mcp: `prepare_replay_tool`, `execute_replay_tool`, `synthesize_code_tool`.
+
+## 18.3. Kết Quả Kiểm Thử (Verification)
+
+Toàn bộ 3 pha (Phase 1, Phase 2, Phase 3) đều vượt qua 100% test tự động:
+- `tests/test_phase1_capture.py` (Multi-session capture, stealth engine, pre-seed state)
+- `tests/test_phase2_lineage.py` (Graph projection, backward/forward traversal, differential analysis, ReplaySpec)
+- `tests/test_phase3_replay_synthesis.py` (Substitution, DRY_RUN, EXECUTE, response comparison, Python/cURL/TS code synthesis, MCP tools)
+

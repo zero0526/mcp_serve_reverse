@@ -102,6 +102,7 @@ class ProjectSessionGraphUseCase:
                     "event_type": r.event_type,
                     "timestamp_ns": r.timestamp_ns,
                     "payload_json": r.payload_json,
+                    "metadata_json": r.metadata_json,
                 }
                 for r in event_rows
             ]

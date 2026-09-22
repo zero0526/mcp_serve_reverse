@@ -2,6 +2,7 @@ import json
 import hashlib
 from typing import Any
 
+from app.adapters.graph.stack_parser import StackFrame, parse_v8_stack
 from app.domain.graph.edges import EdgeEvidence, GraphEdge
 from app.domain.graph.nodes import GraphNode, NodeType
 from app.domain.graph.relations import RelationType
@@ -303,6 +304,220 @@ class GraphProjector:
                                 properties={"path": path},
                             )
                         )
+
+        # 7. PRE-REQUEST FUNCTION EXECUTION GRAPH
+        func_node_map: dict[str, GraphNode] = {}
+
+        def _get_or_create_fn_node(frame: StackFrame) -> GraphNode:
+            f_key = f"{frame.function_name}@{frame.file_url}:{frame.line_no}"
+            if f_key not in func_node_map:
+                f_node_id = f"node_fn_{session_id}_{_hash_val(f_key)}"
+                fnode = GraphNode(
+                    id=f_node_id,
+                    session_id=session_id,
+                    node_type=NodeType.FUNCTION_EXECUTION,
+                    label=f"fn: {frame.function_name}",
+                    entity_id=f_key,
+                    properties={
+                        "function_name": frame.function_name,
+                        "file_url": frame.file_url,
+                        "line_no": frame.line_no,
+                        "col_no": frame.col_no,
+                        "raw_frame": frame.raw_frame,
+                    },
+                )
+                func_node_map[f_key] = fnode
+                nodes.append(fnode)
+            return func_node_map[f_key]
+
+        def _link_call_chain(frames: list[StackFrame]) -> GraphNode | None:
+            if not frames:
+                return None
+            prev_fnode = None
+            for frame in reversed(frames):
+                fnode = _get_or_create_fn_node(frame)
+                if prev_fnode and prev_fnode.id != fnode.id:
+                    edge_exists = any(
+                        e.source_id == prev_fnode.id
+                        and e.target_id == fnode.id
+                        and e.relation_type == RelationType.CALLS
+                        for e in edges
+                    )
+                    if not edge_exists:
+                        edges.append(
+                            GraphEdge(
+                                session_id=session_id,
+                                source_id=prev_fnode.id,
+                                target_id=fnode.id,
+                                relation_type=RelationType.CALLS,
+                                confidence=1.0,
+                                provenance_status="observed",
+                            )
+                        )
+                prev_fnode = fnode
+            return prev_fnode
+
+        for ev in events:
+            ev_type = ev.get("event_type", "")
+            payload = (
+                safe_loads(ev.get("payload_json"))
+                if isinstance(ev.get("payload_json"), str)
+                else ev.get("payload", {})
+            )
+            metadata = (
+                safe_loads(ev.get("metadata_json"))
+                if isinstance(ev.get("metadata_json"), str)
+                else ev.get("metadata", {})
+            )
+            req_id = payload.get("request_id") if isinstance(payload, dict) else None
+
+            if ev_type == "network_request":
+                rnode = req_node_map.get(req_id) if req_id else None
+                if not rnode and isinstance(payload, dict):
+                    req_url = payload.get("url")
+                    if req_url:
+                        for rn in req_node_map.values():
+                            if rn.properties.get("url") == req_url:
+                                rnode = rn
+                                break
+
+                stack_str = (
+                    metadata.get("stack")
+                    or metadata.get("stack_trace")
+                    or (payload.get("stack") if isinstance(payload, dict) else None)
+                    or (payload.get("caller_stack") if isinstance(payload, dict) else None)
+                )
+                frames = parse_v8_stack(stack_str)
+                top_fnode = _link_call_chain(frames)
+
+                if top_fnode and rnode:
+                    edge_exists = any(
+                        e.source_id == top_fnode.id
+                        and e.target_id == rnode.id
+                        and e.relation_type == RelationType.CALLS
+                        for e in edges
+                    )
+                    if not edge_exists:
+                        edges.append(
+                            GraphEdge(
+                                session_id=session_id,
+                                source_id=top_fnode.id,
+                                target_id=rnode.id,
+                                relation_type=RelationType.CALLS,
+                                confidence=1.0,
+                                provenance_status="observed",
+                                properties={"action": "dispatches_request"},
+                            )
+                        )
+
+        # 8. CRYPTO & SERIALIZATION OPERATIONS GRAPH
+        for ev in events:
+            ev_type = ev.get("event_type", "")
+            if ev_type in ["crypto_operation", "serialize"]:
+                payload = (
+                    safe_loads(ev.get("payload_json"))
+                    if isinstance(ev.get("payload_json"), str)
+                    else ev.get("payload", {})
+                )
+                metadata = (
+                    safe_loads(ev.get("metadata_json"))
+                    if isinstance(ev.get("metadata_json"), str)
+                    else ev.get("metadata", {})
+                )
+                crypto_id = f"node_crypto_{session_id}_{ev.get('event_id', _hash_val(str(payload)))}"
+
+                if ev_type == "crypto_operation":
+                    cnode = GraphNode(
+                        id=crypto_id,
+                        session_id=session_id,
+                        node_type=NodeType.CRYPTO_OPERATION,
+                        label=f"Crypto: {payload.get('operation')} ({payload.get('algorithm')})",
+                        properties=payload,
+                    )
+                    nodes.append(cnode)
+
+                    stack_str = (
+                        metadata.get("stack")
+                        or metadata.get("stack_trace")
+                        or (payload.get("caller_stack") if isinstance(payload, dict) else None)
+                    )
+                    frames = parse_v8_stack(stack_str)
+                    top_fnode = _link_call_chain(frames)
+                    if top_fnode:
+                        edges.append(
+                            GraphEdge(
+                                session_id=session_id,
+                                source_id=top_fnode.id,
+                                target_id=crypto_id,
+                                relation_type=RelationType.TRANSFORMS,
+                                confidence=1.0,
+                                provenance_status="observed",
+                            )
+                        )
+
+        # 9. POST-REQUEST RESPONSE CONSUMER & TAINT TRACKING GRAPH
+        for ev in events:
+            ev_type = ev.get("event_type", "")
+            payload = (
+                safe_loads(ev.get("payload_json"))
+                if isinstance(ev.get("payload_json"), str)
+                else ev.get("payload", {})
+            )
+            metadata = (
+                safe_loads(ev.get("metadata_json"))
+                if isinstance(ev.get("metadata_json"), str)
+                else ev.get("metadata", {})
+            )
+
+            if ev_type in ["response_consumed", "response_field_read"]:
+                req_id = payload.get("request_id") if isinstance(payload, dict) else None
+                stack_str = (
+                    metadata.get("stack")
+                    or metadata.get("stack_trace")
+                    or (payload.get("caller_stack") if isinstance(payload, dict) else None)
+                    or (payload.get("reader_stack") if isinstance(payload, dict) else None)
+                )
+                frames = parse_v8_stack(stack_str)
+                top_fnode = _link_call_chain(frames)
+
+                if top_fnode:
+                    # Nối response node tới consumer node
+                    res_node = next(
+                        (
+                            n
+                            for n in nodes
+                            if n.node_type == NodeType.HTTP_RESPONSE
+                            and (n.properties.get("request_id") == req_id or (req_id and req_id in (n.entity_id or "")))
+                        ),
+                        None,
+                    )
+                    if not res_node:
+                        res_node = next((n for n in nodes if n.node_type == NodeType.HTTP_RESPONSE), None)
+
+                    if res_node:
+                        edge_exists = any(
+                            e.source_id == res_node.id
+                            and e.target_id == top_fnode.id
+                            and e.relation_type == RelationType.CONSUMES
+                            and e.properties.get("operation") == ev_type
+                            and e.properties.get("field") == (payload.get("field") if isinstance(payload, dict) else None)
+                            for e in edges
+                        )
+                        if not edge_exists:
+                            edges.append(
+                                GraphEdge(
+                                    session_id=session_id,
+                                    source_id=res_node.id,
+                                    target_id=top_fnode.id,
+                                    relation_type=RelationType.CONSUMES,
+                                    confidence=1.0,
+                                    provenance_status="observed",
+                                    properties={
+                                        "operation": ev_type,
+                                        "field": payload.get("field") if isinstance(payload, dict) else None,
+                                    },
+                                )
+                            )
 
         return nodes, edges
 

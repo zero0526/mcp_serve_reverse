@@ -33,6 +33,7 @@ class JSBridge:
         event_payload = data.get("payload", {})
         metadata = {}
         if data.get("stack"):
+            metadata["stack"] = data["stack"]
             metadata["stack_trace"] = data["stack"]
 
         envelope = EventEnvelope(

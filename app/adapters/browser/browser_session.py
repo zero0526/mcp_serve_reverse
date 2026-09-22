@@ -80,7 +80,7 @@ class BrowserSession:
             )
 
         # 2. Đọc từng file instrumentation theo thứ tự ưu tiên
-        script_names = ["storage.js", "fetch.js", "xhr.js", "cookie.js", "runtime.js", "serializer.js"]
+        script_names = ["storage.js", "fetch.js", "xhr.js", "cookie.js", "crypto.js", "runtime.js", "serializer.js"]
         for name in script_names:
             script_path = INSTRUMENTATION_DIR / name
             if script_path.exists():
