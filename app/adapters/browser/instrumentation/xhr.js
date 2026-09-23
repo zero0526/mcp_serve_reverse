@@ -56,6 +56,11 @@
       info.body = typeof body === "string" ? body : String(body);
     }
 
+    try {
+      this.setRequestHeader("x-lineage-req-id", info.id);
+      info.headers["x-lineage-req-id"] = info.id;
+    } catch (e) {}
+
     emitBridgeEvent(
       "network_request",
       {
@@ -73,7 +78,7 @@
       let respBody = "";
       try {
         if (typeof this.responseText === "string") {
-          respBody = this.responseText.slice(0, 4096);
+          respBody = this.responseText.slice(0, 65536);
         }
       } catch (e) {}
 

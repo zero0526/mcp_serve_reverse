@@ -7,6 +7,11 @@ capturing runtime events, analyzing call stacks & data lineages, and synthesizin
 from typing import Any
 from mcp.server.mcpserver import MCPServer
 
+from app.interfaces.mcp.resources import (
+    get_lineage_resource,
+    get_request_resource,
+    get_session_resource,
+)
 from app.interfaces.mcp.tools.capture import (
     get_capture_status_tool,
     start_capture_session_tool,
@@ -20,6 +25,7 @@ from app.interfaces.mcp.tools.graph import (
 from app.interfaces.mcp.tools.lineage import (
     compare_lineage_tool,
     explain_lineage_path_tool,
+    find_transformations_tool,
     trace_downstream_tool,
     trace_origin_tool,
 )
@@ -32,9 +38,12 @@ from app.interfaces.mcp.tools.network import (
 from app.interfaces.mcp.tools.replay import (
     execute_replay_tool,
     prepare_replay_tool,
+    resolve_dependencies_tool,
     synthesize_code_tool,
+    validate_replay_tool,
 )
 from app.interfaces.mcp.tools.trace import (
+    get_execution_context_tool,
     get_trace_timeline_tool,
     search_trace_events_tool,
 )
@@ -107,6 +116,29 @@ def create_mcp_server() -> MCPServer:
             start_ns=start_ns,
             end_ns=end_ns,
             limit=limit,
+        )
+
+    @server.tool()
+    async def get_execution_context(
+        session_id: str,
+        execution_id: str,
+        include_arguments: bool = True,
+        include_return_value: bool = True,
+        include_stack_trace: bool = True,
+        include_related_network: bool = True,
+        include_call_tree: bool = True,
+        max_related_events: int = 30,
+    ) -> dict[str, Any]:
+        """Lấy toàn bộ context thực thi hàm (caller/callee tree, args, return value, stack, network)."""
+        return await get_execution_context_tool(
+            session_id=session_id,
+            execution_id=execution_id,
+            include_arguments=include_arguments,
+            include_return_value=include_return_value,
+            include_stack_trace=include_stack_trace,
+            include_related_network=include_related_network,
+            include_call_tree=include_call_tree,
+            max_related_events=max_related_events,
         )
 
     # 3. Graph Query Tools
@@ -218,6 +250,27 @@ def create_mcp_server() -> MCPServer:
             comparison_mode=comparison_mode,
         )
 
+    @server.tool()
+    async def find_transformations(
+        session_id: str,
+        source: dict[str, Any] | str | None = None,
+        target: dict[str, Any] | str | None = None,
+        transformation_types: list[str] | None = None,
+        direction: str = "both",
+        max_depth: int = 10,
+        include_arguments: bool = True,
+    ) -> dict[str, Any]:
+        """Phân tích chuỗi các hàm biến đổi dữ liệu liên tiếp (encode, hash, encrypt, serialize)."""
+        return await find_transformations_tool(
+            session_id=session_id,
+            source=source,
+            target=target,
+            transformation_types=transformation_types,
+            direction=direction,
+            max_depth=max_depth,
+            include_arguments=include_arguments,
+        )
+
     # 5. Network Analysis Tools
     @server.tool()
     async def summarize_request(
@@ -301,13 +354,55 @@ def create_mcp_server() -> MCPServer:
         target_request_id: str,
         variables: dict[str, Any] | None = None,
         mode: str = "dry_run",
+        session_id: str | None = None,
+        auto_resolve_dependencies: bool = False,
+        allowed_hosts: list[str] | None = None,
+        allow_mutation: bool = True,
     ) -> dict[str, Any]:
-        """Thực thi request replay (hỗ trợ dry_run hoặc execute thực tế)."""
+        """Thực thi request replay (hỗ trợ dry_run hoặc execute thực tế, tự động resolve dependencies và validate safety)."""
         return await execute_replay_tool(
             task_id=task_id,
             target_request_id=target_request_id,
             variables=variables,
             mode=mode,
+            session_id=session_id,
+            auto_resolve_dependencies=auto_resolve_dependencies,
+            allowed_hosts=allowed_hosts,
+            allow_mutation=allow_mutation,
+        )
+
+    @server.tool()
+    async def validate_replay(
+        task_id: str,
+        target_request_id: str,
+        variables: dict[str, Any] | None = None,
+        allowed_hosts: list[str] | None = None,
+        allowed_methods: list[str] | None = None,
+        allow_mutation: bool = True,
+    ) -> dict[str, Any]:
+        """Kiểm tra chính sách an toàn Replay trước khi phát lại (whitelist host, method, unreplaced secret placeholders)."""
+        return await validate_replay_tool(
+            task_id=task_id,
+            target_request_id=target_request_id,
+            variables=variables,
+            allowed_hosts=allowed_hosts,
+            allowed_methods=allowed_methods,
+            allow_mutation=allow_mutation,
+        )
+
+    @server.tool()
+    async def resolve_dependencies(
+        session_id: str,
+        target_request_id: str,
+        variables: dict[str, Any] | None = None,
+        auto_execute_prerequisites: bool = False,
+    ) -> dict[str, Any]:
+        """Tự động phân tích và giải quyết các request phụ thuộc tuần tự (ví dụ: login lấy token nạp vào request sau)."""
+        return await resolve_dependencies_tool(
+            session_id=session_id,
+            target_request_id=target_request_id,
+            variables=variables,
+            auto_execute_prerequisites=auto_execute_prerequisites,
         )
 
     @server.tool()
@@ -320,6 +415,37 @@ def create_mcp_server() -> MCPServer:
         return await synthesize_code_tool(
             task_id=task_id, target_request_id=target_request_id, language=language
         )
+
+    # 7. MCP Resources
+    @server.resource(
+        "session://{session_id}",
+        name="session_resource",
+        description="Metadata và tóm tắt tổng quan một phiên capture (session).",
+        mime_type="application/json",
+    )
+    async def session_resource(session_id: str) -> str:
+        """Đọc metadata và tóm tắt session theo chuẩn MCP."""
+        return await get_session_resource(session_id=session_id)
+
+    @server.resource(
+        "request://{session_id}/{request_id}",
+        name="request_resource",
+        description="Chi tiết HTTP request, response và lineage tóm tắt.",
+        mime_type="application/json",
+    )
+    async def request_resource(session_id: str, request_id: str) -> str:
+        """Đọc chi tiết request, response và lineage tóm tắt theo chuẩn MCP."""
+        return await get_request_resource(session_id=session_id, request_id=request_id)
+
+    @server.resource(
+        "lineage://{session_id}/{node_id}",
+        name="lineage_resource",
+        description="Cây nguồn gốc và tác động xuôi dòng của một node/giá trị.",
+        mime_type="application/json",
+    )
+    async def lineage_resource(session_id: str, node_id: str) -> str:
+        """Đọc cây nguồn gốc và tác động xuôi dòng theo chuẩn MCP."""
+        return await get_lineage_resource(session_id=session_id, node_id=node_id)
 
     return server
 

@@ -1,12 +1,14 @@
 from typing import Any
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
+from app.application.trace.get_execution_context import GetExecutionContextUseCase
 from app.application.trace.get_timeline import GetTraceTimelineUseCase
 from app.application.trace.search_events import SearchTraceEventsUseCase
 from app.interfaces.mcp.schemas.responses import create_mcp_response
 
 _search_uc = SearchTraceEventsUseCase(session_factory=AsyncSessionLocal)
 _timeline_uc = GetTraceTimelineUseCase(session_factory=AsyncSessionLocal)
+_context_uc = GetExecutionContextUseCase(session_factory=AsyncSessionLocal)
 
 
 async def search_trace_events_tool(
@@ -64,4 +66,34 @@ async def get_trace_timeline_tool(
         session_id=session_id,
         result_count=res["count"],
         source="trace_event_store",
+    )
+
+
+async def get_execution_context_tool(
+    session_id: str,
+    execution_id: str,
+    include_arguments: bool = True,
+    include_return_value: bool = True,
+    include_stack_trace: bool = True,
+    include_related_network: bool = True,
+    include_call_tree: bool = True,
+    max_related_events: int = 30,
+) -> dict[str, Any]:
+    """MCP Tool: Lấy context chi tiết của một lần thực thi hàm (caller/callee tree, args, return value, stack, network)."""
+    res = await _context_uc.execute(
+        session_id=session_id,
+        execution_id=execution_id,
+        include_arguments=include_arguments,
+        include_return_value=include_return_value,
+        include_stack_trace=include_stack_trace,
+        include_related_network=include_related_network,
+        include_call_tree=include_call_tree,
+        max_related_events=max_related_events,
+    )
+    return create_mcp_response(
+        status="COMPLETED" if res.get("found", True) else "NOT_FOUND",
+        data=res,
+        session_id=session_id,
+        result_count=1 if res.get("found", True) else 0,
+        source="trace_execution_context",
     )

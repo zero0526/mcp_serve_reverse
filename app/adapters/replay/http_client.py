@@ -60,10 +60,17 @@ class HttpxReplayExecutor(HTTPReplayExecutorPort):
                     else:
                         content = str(request.body).encode("utf-8")
 
+                # Bỏ header content-length và host tĩnh để httpx tự tính toán chính xác theo payload mới
+                req_headers = {
+                    k: v
+                    for k, v in (request.headers or {}).items()
+                    if k.lower() not in ("content-length", "host")
+                }
+
                 resp = await client.request(
                     method=request.method,
                     url=request.url,
-                    headers=request.headers,
+                    headers=req_headers,
                     params=request.query,
                     json=json_data,
                     content=content,

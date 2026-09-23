@@ -32,9 +32,12 @@ class JSBridge:
 
         event_payload = data.get("payload", {})
         metadata = {}
+        execution_id = data.get("execution_id")
         if data.get("stack"):
             metadata["stack"] = data["stack"]
             metadata["stack_trace"] = data["stack"]
+            if not execution_id:
+                execution_id = f"exec_{uuid.uuid4().hex[:10]}"
 
         envelope = EventEnvelope(
             event_id=f"evt_{uuid.uuid4().hex[:12]}",
@@ -46,6 +49,7 @@ class JSBridge:
             sequence=self.sequence,
             page_id=page_id,
             frame_id=frame_id,
+            execution_id=execution_id,
             payload=event_payload,
             metadata=metadata,
         )

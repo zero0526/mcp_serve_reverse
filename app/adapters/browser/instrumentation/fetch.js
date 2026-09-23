@@ -24,7 +24,8 @@
   const originalFetch = window.fetch;
   window.fetch = async function (...args) {
     const stack = new Error().stack;
-    const [resource, config] = args;
+    let resource = args[0];
+    let config = args[1] || {};
 
     let url = "";
     let method = "GET";
@@ -38,35 +39,52 @@
       method = resource.method;
     }
 
-    if (config) {
-      if (config.method) method = config.method.toUpperCase();
-      if (config.headers) {
-        if (config.headers instanceof Headers) {
-          config.headers.forEach((v, k) => {
-            headers[k] = v;
-          });
-        } else if (Array.isArray(config.headers)) {
-          config.headers.forEach(([k, v]) => {
-            headers[k] = v;
-          });
-        } else if (typeof config.headers === "object") {
-          headers = { ...config.headers };
-        }
+    if (config.method) method = config.method.toUpperCase();
+    if (config.headers) {
+      if (config.headers instanceof Headers) {
+        config.headers.forEach((v, k) => {
+          headers[k] = v;
+        });
+      } else if (Array.isArray(config.headers)) {
+        config.headers.forEach(([k, v]) => {
+          headers[k] = v;
+        });
+      } else if (typeof config.headers === "object") {
+        headers = { ...config.headers };
       }
-      if (config.body !== undefined && config.body !== null) {
-        if (typeof config.body === "string") {
-          body = config.body;
-        } else {
-          try {
-            body = String(config.body);
-          } catch (e) {
-            body = "[Non-string body]";
-          }
+    }
+    if (config.body !== undefined && config.body !== null) {
+      if (typeof config.body === "string") {
+        body = config.body;
+      } else {
+        try {
+          body = String(config.body);
+        } catch (e) {
+          body = "[Non-string body]";
         }
       }
     }
 
     const requestId = "fetch_" + Math.random().toString(36).substring(2, 11);
+
+    // Build options with x-lineage-req-id header attached
+    const fetchOptions = { ...config };
+    try {
+      if (fetchOptions.headers instanceof Headers) {
+        fetchOptions.headers.set("x-lineage-req-id", requestId);
+      } else if (Array.isArray(fetchOptions.headers)) {
+        fetchOptions.headers = [...fetchOptions.headers, ["x-lineage-req-id", requestId]];
+      } else if (fetchOptions.headers && typeof fetchOptions.headers === "object") {
+        fetchOptions.headers = { ...fetchOptions.headers, "x-lineage-req-id": requestId };
+      } else {
+        fetchOptions.headers = { "x-lineage-req-id": requestId };
+      }
+
+      if (resource instanceof Request) {
+        resource.headers.set("x-lineage-req-id", requestId);
+      }
+      headers["x-lineage-req-id"] = requestId;
+    } catch (e) {}
 
     emitBridgeEvent(
       "network_request",
@@ -82,7 +100,7 @@
     );
 
     try {
-      const response = await originalFetch.apply(this, args);
+      const response = await originalFetch.apply(this, [resource, fetchOptions]);
       response.__api_lineage_req_id__ = requestId;
 
       // Clone response to inspect body without consuming the stream
@@ -105,7 +123,7 @@
                 url: url,
                 status_code: clone.status,
                 headers: respHeaders,
-                body: text.slice(0, 4096),
+                body: text.slice(0, 65536),
                 body_size: text.length,
               },
               null

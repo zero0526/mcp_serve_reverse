@@ -42,3 +42,15 @@ class GraphRepositoryPort(Protocol):
     async def get_outgoing_edges(self, source_node_id: str) -> list[GraphEdge]:
         """Lấy các cạnh xuất phát từ node nguồn (phục vụ forward traversal)."""
         ...
+
+    async def delete_session_graph(self, session_id: str) -> None:
+        """Xóa toàn bộ nodes, edges và evidence của một session."""
+        ...
+
+    async def delete_nodes(self, node_ids: list[str]) -> None:
+        """Xóa danh sách nodes theo ID và các edges kết nối tới chúng."""
+        ...
+
+    async def delete_edges(self, edge_ids: list[str]) -> None:
+        """Xóa danh sách edges theo ID."""
+        ...

@@ -90,16 +90,46 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                 ).scalar_one_or_none()
 
                 if existing_req:
-                    existing_req.method = payload.get("method", "GET")
-                    existing_req.url = payload.get("url", "")
-                    existing_req.host = url_parsed.get("host") or payload.get("host")
-                    existing_req.path = url_parsed.get("path") or payload.get("path")
-                    existing_req.query_json = safe_dumps(url_parsed.get("query") or payload.get("query") or {})
-                    existing_req.headers_json = safe_dumps(payload.get("headers", {}))
-                    existing_req.body_json = safe_dumps(payload.get("body")) if payload.get("body") else None
-                    existing_req.resource_type = payload.get("resource_type")
-                    existing_req.status = "captured"
+                    # Cập nhật method, url, host, path, query nếu payload có thông tin đầy đủ hơn
+                    if payload.get("method") and payload.get("method") != "UNKNOWN":
+                        existing_req.method = payload.get("method")
+                    if payload.get("url"):
+                        existing_req.url = payload.get("url")
+                    if url_parsed.get("host") or payload.get("host"):
+                        existing_req.host = url_parsed.get("host") or payload.get("host")
+                    if url_parsed.get("path") or payload.get("path"):
+                        existing_req.path = url_parsed.get("path") or payload.get("path")
+                    if url_parsed.get("query") or payload.get("query"):
+                        existing_req.query_json = safe_dumps(url_parsed.get("query") or payload.get("query") or {})
+
+                    if existing_req.status == "placeholder" or (event.timestamp_ns and event.timestamp_ns < existing_req.started_at_ns):
+                        existing_req.started_at_ns = event.timestamp_ns
+
+                    # Giữ nguyên execution_id từ JS call stack nếu bản ghi trước đó đã có
+                    if not existing_req.execution_id and event.execution_id:
+                        existing_req.execution_id = event.execution_id
+                    if not existing_req.page_id and event.page_id:
+                        existing_req.page_id = event.page_id
+                    if not existing_req.frame_id and event.frame_id:
+                        existing_req.frame_id = event.frame_id
+                    if not existing_req.resource_type and payload.get("resource_type"):
+                        existing_req.resource_type = payload.get("resource_type")
+
+                    # Gộp headers thay vì đè mất thông tin
+                    curr_headers = safe_loads(existing_req.headers_json) or {}
+                    new_headers = payload.get("headers") or {}
+                    curr_headers.update(new_headers)
+                    existing_req.headers_json = safe_dumps(curr_headers)
+
+                    if not existing_req.body_json and payload.get("body"):
+                        existing_req.body_json = safe_dumps(payload.get("body"))
+                    elif not existing_req.body_json and payload.get("post_data"):
+                        existing_req.body_json = safe_dumps(payload.get("post_data"))
+
+                    if existing_req.status in (None, "placeholder"):
+                        existing_req.status = "captured"
                 else:
+                    body_val = payload.get("body") or payload.get("post_data")
                     req_record = NetworkRequestModel(
                         id=req_id,
                         session_id=event.session_id,
@@ -113,7 +143,7 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                         path=url_parsed.get("path") or payload.get("path"),
                         query_json=safe_dumps(url_parsed.get("query") or payload.get("query") or {}),
                         headers_json=safe_dumps(payload.get("headers", {})),
-                        body_json=safe_dumps(payload.get("body")) if payload.get("body") else None,
+                        body_json=safe_dumps(body_val) if body_val else None,
                         resource_type=payload.get("resource_type"),
                         started_at_ns=event.timestamp_ns,
                         status="captured",
@@ -126,8 +156,10 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                 req_id = payload.get("request_id") or "unknown_req"
 
                 # Kiểm tra nếu request đã tồn tại thì liên kết, nếu chưa tạo request placeholder
-                res_check = await db.execute(select(NetworkRequestModel).where(NetworkRequestModel.id == req_id))
-                if not res_check.scalar_one_or_none():
+                req_check = (
+                    await db.execute(select(NetworkRequestModel).where(NetworkRequestModel.id == req_id))
+                ).scalar_one_or_none()
+                if not req_check:
                     placeholder_req = NetworkRequestModel(
                         id=req_id,
                         session_id=event.session_id,
@@ -138,18 +170,34 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                         status="placeholder",
                     )
                     db.add(placeholder_req)
+                else:
+                    if not req_check.completed_at_ns:
+                        req_check.completed_at_ns = event.timestamp_ns
 
-                res_record = NetworkResponseModel(
-                    id=f"res_{event.event_id}",
-                    request_id=req_id,
-                    event_id=event.event_id,
-                    status_code=payload.get("status_code"),
-                    headers_json=safe_dumps(payload.get("headers", {})),
-                    body_json=safe_dumps(payload.get("body")) if payload.get("body") else None,
-                    received_at_ns=event.timestamp_ns,
-                    metadata_json=metadata_str,
-                )
-                db.add(res_record)
+                # Gộp response nếu đã tồn tại để tránh trùng lặp giữa in-page và network mapper
+                existing_res = (
+                    await db.execute(select(NetworkResponseModel).where(NetworkResponseModel.request_id == req_id))
+                ).scalar_one_or_none()
+                if existing_res:
+                    if payload.get("status_code") is not None:
+                        existing_res.status_code = payload.get("status_code")
+                    curr_headers = safe_loads(existing_res.headers_json) or {}
+                    curr_headers.update(payload.get("headers") or {})
+                    existing_res.headers_json = safe_dumps(curr_headers)
+                    if not existing_res.body_json and payload.get("body"):
+                        existing_res.body_json = safe_dumps(payload.get("body"))
+                else:
+                    res_record = NetworkResponseModel(
+                        id=f"res_{event.event_id}",
+                        request_id=req_id,
+                        event_id=event.event_id,
+                        status_code=payload.get("status_code"),
+                        headers_json=safe_dumps(payload.get("headers", {})),
+                        body_json=safe_dumps(payload.get("body")) if payload.get("body") else None,
+                        received_at_ns=event.timestamp_ns,
+                        metadata_json=metadata_str,
+                    )
+                    db.add(res_record)
 
             elif ev_type in [
                 EventType.STORAGE_READ.value,

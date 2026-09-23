@@ -1,5 +1,5 @@
 from typing import Any
-from sqlalchemy import select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -8,6 +8,7 @@ from app.adapters.persistence.sqlite.models import (
     EdgeEvidenceModel,
     GraphEdgeModel,
     GraphNodeModel,
+    TraceEventModel,
 )
 from app.domain.graph.edges import EdgeEvidence, GraphEdge
 from app.domain.graph.nodes import GraphNode
@@ -102,10 +103,19 @@ class SQLiteGraphRepository(GraphRepositoryPort):
 
                 # Thêm evidence
                 for ev in edge.evidence_list:
+                    source_evt_id = ev.source_event_id
+                    if source_evt_id:
+                        stmt_check = select(TraceEventModel.event_id).where(
+                            TraceEventModel.event_id == source_evt_id
+                        )
+                        res_check = await db.execute(stmt_check)
+                        if not res_check.scalar_one_or_none():
+                            source_evt_id = None
+
                     ev_rec = EdgeEvidenceModel(
                         edge_id=edge_db_id,
                         evidence_type=ev.evidence_type,
-                        source_event_id=ev.source_event_id,
+                        source_event_id=source_evt_id,
                         confidence=ev.confidence,
                         explanation=ev.explanation,
                         metadata_json=safe_dumps(ev.metadata),
@@ -220,3 +230,31 @@ class SQLiteGraphRepository(GraphRepositoryPort):
             res = await db.execute(stmt)
             records = res.scalars().all()
             return [self._to_graph_edge(r) for r in records]
+
+    async def delete_session_graph(self, session_id: str) -> None:
+        """Xóa toàn bộ nodes và edges của session trong cơ sở dữ liệu."""
+        async with self.session_factory() as db:
+            await db.execute(delete(GraphEdgeModel).where(GraphEdgeModel.session_id == session_id))
+            await db.execute(delete(GraphNodeModel).where(GraphNodeModel.session_id == session_id))
+            await db.commit()
+
+    async def delete_nodes(self, node_ids: list[str]) -> None:
+        """Xóa danh sách nodes và tất cả các cạnh kết nối tới chúng."""
+        if not node_ids:
+            return
+        async with self.session_factory() as db:
+            await db.execute(
+                delete(GraphEdgeModel).where(
+                    or_(GraphEdgeModel.source_id.in_(node_ids), GraphEdgeModel.target_id.in_(node_ids))
+                )
+            )
+            await db.execute(delete(GraphNodeModel).where(GraphNodeModel.id.in_(node_ids)))
+            await db.commit()
+
+    async def delete_edges(self, edge_ids: list[str]) -> None:
+        """Xóa danh sách edges theo ID."""
+        if not edge_ids:
+            return
+        async with self.session_factory() as db:
+            await db.execute(delete(GraphEdgeModel).where(GraphEdgeModel.id.in_(edge_ids)))
+            await db.commit()

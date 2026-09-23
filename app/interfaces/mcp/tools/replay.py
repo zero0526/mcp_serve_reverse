@@ -63,15 +63,32 @@ async def execute_replay_tool(
     target_request_id: str,
     variables: dict[str, Any] | None = None,
     mode: str = "dry_run",
+    session_id: str | None = None,
+    auto_resolve_dependencies: bool = False,
+    allowed_hosts: list[str] | None = None,
+    allow_mutation: bool = True,
 ) -> dict[str, Any]:
     """MCP Tool: Thực thi replay (hỗ trợ dry_run hoặc execute thực tế)."""
+    from app.domain.replay.policies import ReplaySafetyPolicy
+
     replay_mode = ReplayMode(mode.lower().strip())
     gen_spec, _, exec_uc, _ = _get_use_cases()
     spec = await gen_spec.execute(task_id, target_request_id)
+
+    policy = None
+    if allowed_hosts is not None:
+        policy = ReplaySafetyPolicy(
+            allowed_hosts=allowed_hosts,
+            allow_mutation=allow_mutation,
+        )
+
     req, result, comparison = await exec_uc.execute(
         spec=spec,
         variables=variables,
         mode=replay_mode,
+        policy=policy,
+        session_id=session_id or task_id,
+        auto_resolve_dependencies=auto_resolve_dependencies,
     )
     data = {
         "mode": str(replay_mode),
@@ -85,6 +102,63 @@ async def execute_replay_tool(
         source="replay_engine",
     )
     resp.update(data)
+    return resp
+
+
+async def validate_replay_tool(
+    task_id: str,
+    target_request_id: str,
+    variables: dict[str, Any] | None = None,
+    allowed_hosts: list[str] | None = None,
+    allowed_methods: list[str] | None = None,
+    allow_mutation: bool = True,
+) -> dict[str, Any]:
+    """MCP Tool: Kiểm tra chính sách an toàn Replay trước khi phát lại request mạng."""
+    from app.application.replay.validate_replay import ValidateReplayUseCase
+    from app.domain.replay.policies import ReplaySafetyPolicy
+
+    gen_spec, prep, _, _ = _get_use_cases()
+    spec = await gen_spec.execute(task_id, target_request_id)
+    req = prep.execute(spec, variables=variables)
+
+    validator = ValidateReplayUseCase()
+    policy = ReplaySafetyPolicy(
+        allowed_hosts=allowed_hosts or [],
+        allowed_methods=allowed_methods or ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+        allow_mutation=allow_mutation,
+    )
+    res = validator.execute(req, policy)
+    resp = create_mcp_response(
+        status="COMPLETED",
+        data=res,
+        source="replay_safety",
+    )
+    resp.update(res)
+    return resp
+
+
+async def resolve_dependencies_tool(
+    session_id: str,
+    target_request_id: str,
+    variables: dict[str, Any] | None = None,
+    auto_execute_prerequisites: bool = False,
+) -> dict[str, Any]:
+    """MCP Tool: Phân tích và tự động giải quyết các request phụ thuộc tuần tự (ví dụ: login lấy token)."""
+    from app.application.replay.resolve_dependencies import ResolveDependenciesUseCase
+
+    resolver = ResolveDependenciesUseCase(session_factory=AsyncSessionLocal)
+    plan = await resolver.execute(
+        session_id=session_id,
+        target_request_id=target_request_id,
+        variables=variables,
+        auto_execute_prerequisites=auto_execute_prerequisites,
+    )
+    resp = create_mcp_response(
+        status="COMPLETED",
+        data=plan,
+        source="replay_dependency_resolver",
+    )
+    resp.update(plan)
     return resp
 
 

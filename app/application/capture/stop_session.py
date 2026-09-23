@@ -21,23 +21,38 @@ class StopSessionUseCase:
         # 1. Cập nhật trạng thái stopping
         await self.session_repo.update_status(session_id, SessionStatus.STOPPING)
 
-        # 2. Dừng browser nếu đang chạy
+        # 2. Dừng browser nếu đang chạy (đồng bộ cookie & chụp screenshot nếu có yêu cầu)
         browser = self.active_browsers.pop(session_id, None)
+        screenshot_path = None
         if browser:
+            try:
+                await browser.sync_cookie_snapshot()
+            except Exception:
+                pass
+            if browser._options.get("save_screenshots", False):
+                try:
+                    screenshot_path = await browser.capture_screenshot()
+                except Exception:
+                    pass
             await browser.stop()
 
         # 3. Chốt kết thúc session
         now_ns = time.time_ns()
         stats = await self.session_repo.get_statistics(session_id)
+        meta_update: dict[str, Any] = {"statistics": stats}
+        if screenshot_path:
+            meta_update["screenshot_path"] = screenshot_path
+
         await self.session_repo.update_status(
             session_id=session_id,
             status=SessionStatus.STOPPED,
             ended_at_ns=now_ns,
-            metadata_update={"statistics": stats},
+            metadata_update=meta_update,
         )
 
         return {
             "session_id": session_id,
             "status": SessionStatus.STOPPED.value,
             "statistics": stats,
+            "screenshot_path": screenshot_path,
         }

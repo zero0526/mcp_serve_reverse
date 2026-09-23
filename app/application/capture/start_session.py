@@ -35,6 +35,10 @@ class StartSessionUseCase:
             meta["has_pre_seed"] = True
             meta["pre_seed_cookies_count"] = len(pre_seed_state.cookies)
             meta["pre_seed_storage_keys"] = list(pre_seed_state.storage.local_storage.keys())
+        if options:
+            for opt_key in ("capture_options", "allowed_domains", "save_screenshots", "filter_static"):
+                if opt_key in options:
+                    meta[opt_key] = options[opt_key]
 
         session_record = await self.session_repo.create(
             session_id=session_id,
@@ -54,13 +58,24 @@ class StartSessionUseCase:
 
         # 3. Bật trình duyệt, tiêm pre-seed và instrumentation
         await self.session_repo.update_status(session_id, SessionStatus.STARTING)
-        await browser_session.start(
-            session_id=session_id,
-            target=target,
-            pre_seed_state=pre_seed_state,
-            options=options,
-        )
-        await self.session_repo.update_status(session_id, SessionStatus.RUNNING)
+        try:
+            await browser_session.start(
+                session_id=session_id,
+                target=target,
+                pre_seed_state=pre_seed_state,
+                options=options,
+            )
+            await self.session_repo.update_status(session_id, SessionStatus.RUNNING)
+        except Exception as e:
+            await browser_session.stop()
+            self.active_browsers.pop(session_id, None)
+            await self.session_repo.update_status(
+                session_id=session_id,
+                status=SessionStatus.FAILED,
+                ended_at_ns=time.time_ns(),
+                metadata_update={"error": str(e)},
+            )
+            raise
 
         return {
             "session_id": session_id,

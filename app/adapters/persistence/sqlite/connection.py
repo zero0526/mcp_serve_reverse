@@ -63,3 +63,12 @@ def get_sync_session() -> Generator[Session, None, None]:
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         yield session
+
+
+async def init_db() -> None:
+    """Tự động khởi tạo schema cơ sở dữ liệu nếu chưa tồn tại."""
+    from app.adapters.persistence.sqlite.models import Base
+
+    async with async_engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+

@@ -7,6 +7,8 @@ from app.adapters.persistence.sqlite.models import NetworkResponseModel
 from app.adapters.replay.http_client import HttpxReplayExecutor
 from app.application.replay.compare_responses import CompareResponsesUseCase
 from app.application.replay.prepare_replay import PrepareReplayUseCase
+from app.application.replay.resolve_dependencies import ResolveDependenciesUseCase
+from app.application.replay.validate_replay import ValidateReplayUseCase
 from app.domain.lineage.entities import ReplaySpec
 from app.domain.replay.entities import (
     ReplayComparison,
@@ -27,11 +29,18 @@ class ExecuteReplayUseCase:
         http_executor: HTTPReplayExecutorPort | None = None,
         prepare_use_case: PrepareReplayUseCase | None = None,
         compare_use_case: CompareResponsesUseCase | None = None,
+        validate_use_case: ValidateReplayUseCase | None = None,
+        resolve_dependencies_use_case: ResolveDependenciesUseCase | None = None,
         session_factory=AsyncSessionLocal,
     ):
         self.http_executor = http_executor or HttpxReplayExecutor()
         self.prepare_use_case = prepare_use_case or PrepareReplayUseCase()
         self.compare_use_case = compare_use_case or CompareResponsesUseCase()
+        self.validate_use_case = validate_use_case or ValidateReplayUseCase()
+        self.resolve_dependencies_use_case = (
+            resolve_dependencies_use_case
+            or ResolveDependenciesUseCase(session_factory=session_factory, http_executor=self.http_executor)
+        )
         self.session_factory = session_factory
 
     async def execute(
@@ -40,11 +49,39 @@ class ExecuteReplayUseCase:
         variables: dict[str, Any] | None = None,
         mode: ReplayMode = ReplayMode.DRY_RUN,
         policy: ReplaySafetyPolicy | None = None,
+        session_id: str | None = None,
+        auto_resolve_dependencies: bool = False,
     ) -> tuple[ReplayRequest, ReplayExecutionResult | None, ReplayComparison | None]:
-        # 1. Chuẩn bị request với các biến đã giải quyết
-        req = self.prepare_use_case.execute(spec, variables)
+        vars_map = dict(variables or {})
 
-        # 2. Nếu chế độ DRY_RUN, dừng lại và trả về kết quả chuẩn bị mà không gửi request mạng
+        # 0. Tự động phân giải phụ thuộc tuần tự nếu được yêu cầu và có session_id
+        if auto_resolve_dependencies and session_id:
+            dep_res = await self.resolve_dependencies_use_case.execute(
+                session_id=session_id,
+                target_request_id=spec.target_request_id,
+                variables=vars_map,
+                auto_execute_prerequisites=True,
+            )
+            if dep_res.get("resolved_variables"):
+                vars_map.update(dep_res["resolved_variables"])
+
+        # 1. Chuẩn bị request với các biến đã giải quyết
+        req = self.prepare_use_case.execute(spec, vars_map)
+
+        # 2. Kiểm tra chính sách an toàn Replay trước khi thực thi
+        if policy is not None:
+            val_res = self.validate_use_case.execute(req, policy)
+            if not val_res["is_valid"]:
+                err_msg = f"Replay blocked by safety policy: {'; '.join(val_res['violations'])}"
+                blocked_result = ReplayExecutionResult(
+                    request=req,
+                    status_code=None,
+                    success=False,
+                    error_message=err_msg,
+                )
+                return req, blocked_result, None
+
+        # 3. Nếu chế độ DRY_RUN, dừng lại và trả về kết quả chuẩn bị mà không gửi request mạng
         if mode == ReplayMode.DRY_RUN:
             return req, None, None
 

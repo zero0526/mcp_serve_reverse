@@ -4,6 +4,7 @@ from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.graph_repository import SQLiteGraphRepository
 from app.application.lineage.compare_lineage import CompareLineageUseCase
 from app.application.lineage.explain_path import ExplainLineagePathUseCase
+from app.application.lineage.find_transformations import FindTransformationsUseCase
 from app.application.lineage.trace_downstream import TraceDownstreamUseCase
 from app.application.lineage.trace_origin import TraceOriginUseCase
 from app.interfaces.mcp.schemas.responses import create_mcp_response
@@ -13,6 +14,7 @@ _origin_uc = TraceOriginUseCase(graph_repo=_graph_repo)
 _downstream_uc = TraceDownstreamUseCase(graph_repo=_graph_repo)
 _explain_uc = ExplainLineagePathUseCase(graph_repo=_graph_repo)
 _compare_uc = CompareLineageUseCase(graph_repo=_graph_repo)
+_transform_uc = FindTransformationsUseCase(graph_repository=_graph_repo)
 
 
 async def trace_origin_tool(
@@ -111,4 +113,33 @@ async def compare_lineage_tool(
         data=res,
         session_id=left_session_id,
         source="lineage_analysis",
+    )
+
+
+async def find_transformations_tool(
+    session_id: str,
+    source: dict[str, Any] | str | None = None,
+    target: dict[str, Any] | str | None = None,
+    transformation_types: list[str] | None = None,
+    direction: str = "both",
+    max_depth: int = 10,
+    include_arguments: bool = True,
+) -> dict[str, Any]:
+    """MCP Tool: Phân tích chuỗi các hàm biến đổi dữ liệu liên tiếp (encode, hash, encrypt, serialize)."""
+    safe_depth = max(1, min(max_depth, 50))
+    res = await _transform_uc.execute(
+        session_id=session_id,
+        source=source,
+        target=target,
+        transformation_types=transformation_types,
+        direction=direction,
+        max_depth=safe_depth,
+        include_arguments=include_arguments,
+    )
+    return create_mcp_response(
+        status="COMPLETED",
+        data=res,
+        session_id=session_id,
+        result_count=res.get("count", 0),
+        source="lineage_transformations",
     )
