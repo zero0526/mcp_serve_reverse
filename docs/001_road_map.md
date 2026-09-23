@@ -150,3 +150,83 @@ flowchart LR
 2. **Bước 2**: Viết mã nguồn cho [app/bootstrap.py](file:///d:/source_code/mcp_serve_reverse/app/bootstrap.py) và [app/main.py](file:///d:/source_code/mcp_serve_reverse/app/main.py) để có entrypoint chuẩn chạy MCP Server.
 3. **Bước 3**: Lấp đầy các use case còn thiếu ([get_execution_context.py](file:///d:/source_code/mcp_serve_reverse/app/application/trace/get_execution_context.py), [find_transformations.py](file:///d:/source_code/mcp_serve_reverse/app/application/lineage/find_transformations.py), [resolve_dependencies.py](file:///d:/source_code/mcp_serve_reverse/app/application/replay/resolve_dependencies.py)).
 4. **Bước 4**: Viết unit test cho [tests/domain/](file:///d:/source_code/mcp_serve_reverse/tests/domain), MCP Resources và điền tài liệu [docs/architecture.md](file:///d:/source_code/mcp_serve_reverse/docs/architecture.md).
+
+
+Viewed 001_road_map.md:1-152
+Viewed server.py:1-160
+Viewed server.py:161-300
+Viewed server.py:301-463
+Viewed graph.py:1-90
+Listed directory application
+Listed directory graph
+Listed directory lineage
+Viewed lineage.py:1-100
+Viewed lineage.py:101-146
+Viewed differential_analysis.py:1-60
+Viewed generate_replay_spec.py:1-60
+Viewed replay.py:1-60
+Listed directory replay
+Viewed compare_responses.py:1-60
+Viewed execute_replay.py:1-60
+Listed directory trace
+Listed directory network
+Listed directory ingest
+Viewed capture.py:1-90
+Viewed session_repository.py:1-60
+Viewed session_repository.py:61-166
+Viewed network.py:1-126
+Ran command: `python -c "import mcp.server.mcpserver; print(dir(mcp.server.mcpserver.MCPServer))"`
+Ran command: `uv run python -c "import mcp.server.mcpserver; print(dir(mcp.server.mcpserver.MCPServer))"`
+Viewed test_phase4_mcp_query_layer.py:1-70
+
+Sau khi rà soát toàn bộ 23 MCP Tools và 3 MCP Resources hiện có so với kiến trúc 5 Phase và các use case trong codebase, hệ thống đã phủ rất tốt các luồng phân tích sâu. Tuy nhiên, **vẫn còn một số điểm thiếu sót và điểm mở rộng quan trọng** để trải nghiệm của một Agent LLM (như Claude, Antigravity, Cursor) đạt mức hoàn hảo:
+
+---
+
+### 1. Thiếu các Tool Khám phá & Điều hướng Dữ liệu (Discovery Tools) — *Điểm thiếu quan trọng nhất*
+
+Hiện tại, hầu hết các tool đều yêu cầu Agent phải biết trước `session_id` hoặc `request_id`. Nếu một người dùng mới mở chat và nói *"Hãy phân tích cho tôi các request trong phiên capture gần nhất"*, Agent sẽ bị lúng túng vì:
+- ❌ **Chưa có tool `list_sessions`**: Không có cách nào để LLM liệt kê danh sách các phiên capture trong database (kèm metadata: URL mục tiêu, thời gian bắt đầu, số lượng event, status).
+- ❌ **Chưa có tool `list_requests`**: Một session có thể bắt hàng trăm request (ảnh, css, xhr, fetch). Hiện tại LLM chỉ có thể gọi `search_trace_events` thô rất tốn context window, hoặc phải biết trước `request_id` mới gọi được `summarize_request`. Tool `list_requests(session_id, method, url_keyword, limit)` sẽ giúp LLM lọc nhanh ra các API JSON/XHR cốt lõi cần mổ xẻ.
+
+---
+
+### 2. Các Use Case nghiệp vụ lõi đã triển khai nhưng CHƯA phơi ra (expose) thành MCP Tool
+
+Trong tầng `app/application/`, chúng ta đã viết các use case rất mạnh nhưng chưa được đăng ký trong [app/interfaces/mcp/server.py](file:///d:/source_code/mcp_serve_reverse/app/interfaces/mcp/server.py):
+
+| Use Case đã có | Tệp nguồn | Giá trị mang lại nếu expose thành MCP Tool |
+| :--- | :--- | :--- |
+| **`differential_analysis`** | [differential_analysis.py](file:///d:/source_code/mcp_serve_reverse/app/application/lineage/differential_analysis.py) | **Cực kỳ quan trọng**: Cho phép LLM so sánh các session của cùng một `task_id` (Session 1 tên A, Session 2 tên B) để tự động nhận diện tham số nào là `STATIC`, `TIME_DEPENDENT`, `USER_INPUT`, `HASH_SIGNATURE`. Hiện tại mới chỉ được gọi ngầm bên trong `ReplaySpec`. |
+| **`rebuild_graph`** | [rebuild_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/rebuild_graph.py) | Cho phép LLM yêu cầu xây dựng lại đồ thị từ SQLite raw trace events khi cập nhật heuristic hoặc sau khi capture thêm. Hiện mới chỉ có trên CLI. |
+| **`compact_graph`** | [compact_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/compact_graph.py) | Cho phép LLM chủ động lọc bỏ các node rác (file tĩnh `.png`, `.css`, các node cô lập) trước khi truy vấn đồ thị để tránh tràn context window. |
+
+---
+
+### 3. Thiếu Tool Trực quan hóa Đồ thị (Graph Visualization / Export)
+
+- Khi Agent phân tích đường dẫn nguồn gốc dữ liệu (lineage path), kết quả hiện trả về dạng JSON các node/edge.
+- Nếu bổ sung thêm tool **`export_lineage_graph(session_id, target_node_id, format="mermaid")`**, LLM có thể sinh ra ngay một khối biểu đồ Mermaid trực quan để hiển thị trực tiếp trong khung chat cho người dùng thấy luồng biến đổi: `localStorage -> Function -> SubtleCrypto -> Header`.
+
+---
+
+### 4. Thiếu chuẩn mở rộng MCP: MCP Prompts & Server Instructions
+
+Giao thức MCP tiêu chuẩn không chỉ hỗ trợ **Tools** và **Resources**, mà còn có:
+1. **`instructions` (System Prompt cho MCP Server)**:
+   - Hiện tại server chưa truyền tham số `instructions` vào `MCPServer("api_lineage", instructions=...)`. Khi Client kết nối, nếu có `instructions`, Agent sẽ được hướng dẫn tự động quy trình chuẩn (ví dụ: `list_sessions` $\rightarrow$ `list_requests` $\rightarrow$ `summarize_request` $\rightarrow$ `trace_origin` $\rightarrow$ `synthesize_code`).
+2. **MCP Prompts (`@server.prompt()`)**:
+   - Định nghĩa các prompt mẫu tích hợp sẵn để người dùng kích hoạt nhanh từ giao diện:
+     - `reverse_api_workflow(session_id, request_id)`: Template hướng dẫn Agent đảo ngược một endpoint từ A-Z.
+     - `signature_analysis_workflow(session_id, header_name)`: Template chuyên dụng bóc tách chữ ký/token mã hóa (Web Crypto/WASM).
+
+---
+
+### 💡 Đề xuất triển khai tiếp theo:
+Nếu bạn đồng ý, tôi có thể triển khai bổ sung ngay gói **"MCP Completeness Pack"** gồm:
+1. Thêm **`list_sessions`** & **`list_requests`** (Discovery).
+2. Expose **`differential_analysis`**, **`rebuild_graph`**, **`compact_graph`** (Core Use Cases).
+3. Thêm tool **`export_lineage_graph`** (Xuất sơ đồ Mermaid trực quan).
+4. Thiết lập **`instructions`** và các **MCP Prompts** mẫu theo chuẩn Model Context Protocol.
+
+Bạn có muốn tôi tiến hành cập nhật bổ sung các công cụ này luôn không?
