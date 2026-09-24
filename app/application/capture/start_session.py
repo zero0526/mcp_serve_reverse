@@ -52,7 +52,7 @@ class StartSessionUseCase:
         # 2. Khởi tạo BrowserSession gắn với IngestEventUseCase
         browser_session = BrowserSession(
             event_consumer=self.ingest_use_case.execute,
-            headless=(options or {}).get("headless", True),
+            headless=(options or {}).get("headless", False),
         )
         self.active_browsers[session_id] = browser_session
 

@@ -10,6 +10,7 @@ from app.adapters.persistence.sqlite.models import (
     NetworkResponseModel,
     SessionModel,
     StorageOperationModel,
+    TaskModel,
     TraceEventModel,
 )
 from app.domain.shared.enums import SessionStatus
@@ -37,19 +38,62 @@ class SQLiteSessionRepository(SessionRepositoryPort):
             meta["task_id"] = task_id
 
         now_ns = time.time_ns()
-        session_obj = SessionModel(
-            id=session_id,
-            source=source,
-            name=name,
-            target=target,
-            status=SessionStatus.CREATED.value,
-            started_at_ns=now_ns,
-            created_at_ns=now_ns,
-            updated_at_ns=now_ns,
-            metadata_json=safe_dumps(meta),
-        )
-
         async with self.session_factory() as db:  # type: AsyncSession
+            if task_id:
+                # Đảm bảo task_id tồn tại để không vi phạm Foreign Key constraint
+                stmt_t = select(TaskModel.id).where(TaskModel.id == task_id)
+                t_exists = (await db.execute(stmt_t)).scalar_one_or_none()
+                if not t_exists:
+                    db.add(
+                        TaskModel(
+                            id=task_id,
+                            name=f"Task {task_id}",
+                            goal_description="Auto-created task wrapper for session",
+                            instructions="",
+                            created_at_ns=now_ns,
+                            updated_at_ns=now_ns,
+                        )
+                    )
+                    await db.flush()
+
+            stmt_s = select(SessionModel).where(SessionModel.id == session_id)
+            existing_sess = (await db.execute(stmt_s)).scalar_one_or_none()
+            if existing_sess:
+                if name:
+                    existing_sess.name = name
+                if target:
+                    existing_sess.target = target
+                if task_id:
+                    existing_sess.task_id = task_id
+                existing_sess.updated_at_ns = now_ns
+                if meta:
+                    curr_meta = safe_loads(existing_sess.metadata_json) if existing_sess.metadata_json else {}
+                    curr_meta.update(meta)
+                    existing_sess.metadata_json = safe_dumps(curr_meta)
+                await db.commit()
+                return {
+                    "id": session_id,
+                    "source": existing_sess.source,
+                    "name": existing_sess.name,
+                    "target": existing_sess.target,
+                    "status": existing_sess.status,
+                    "task_id": existing_sess.task_id,
+                    "started_at_ns": existing_sess.started_at_ns,
+                    "metadata": safe_loads(existing_sess.metadata_json) if existing_sess.metadata_json else {},
+                }
+
+            session_obj = SessionModel(
+                id=session_id,
+                task_id=task_id,
+                source=source,
+                name=name,
+                target=target,
+                status=SessionStatus.CREATED.value,
+                started_at_ns=now_ns,
+                created_at_ns=now_ns,
+                updated_at_ns=now_ns,
+                metadata_json=safe_dumps(meta),
+            )
             db.add(session_obj)
             await db.commit()
 
@@ -107,7 +151,7 @@ class SQLiteSessionRepository(SessionRepositoryPort):
                 "name": obj.name,
                 "target": obj.target,
                 "status": obj.status,
-                "task_id": meta.get("task_id"),
+                "task_id": obj.task_id or meta.get("task_id"),
                 "started_at_ns": obj.started_at_ns,
                 "ended_at_ns": obj.ended_at_ns,
                 "created_at_ns": obj.created_at_ns,

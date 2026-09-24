@@ -1,8 +1,10 @@
 import uuid
 from typing import Any
+from sqlalchemy import select
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.event_repository import SQLiteEventRepository
+from app.adapters.persistence.sqlite.models import SessionModel
 from app.adapters.persistence.sqlite.session_repository import SQLiteSessionRepository
 from app.application.capture.capture_status import CaptureStatusUseCase
 from app.application.capture.start_session import StartSessionUseCase
@@ -10,18 +12,12 @@ from app.application.capture.stop_session import StopSessionUseCase
 from app.application.ingest.ingest_event import IngestEventUseCase
 from app.interfaces.mcp.schemas.responses import create_mcp_response
 
-
-def _get_capture_services():
-    session_repo = SQLiteSessionRepository(session_factory=AsyncSessionLocal)
-    event_repo = SQLiteEventRepository(session_factory=AsyncSessionLocal)
-    ingest_uc = IngestEventUseCase(event_store=event_repo)
-    start_uc = StartSessionUseCase(session_repository=session_repo, ingest_use_case=ingest_uc)
-    stop_uc = StopSessionUseCase(session_repository=session_repo, active_browsers=start_uc.active_browsers)
-    status_uc = CaptureStatusUseCase(session_repository=session_repo)
-    return start_uc, stop_uc, status_uc
-
-
-_start_uc, _stop_uc, _status_uc = _get_capture_services()
+_session_repo = SQLiteSessionRepository(session_factory=AsyncSessionLocal)
+_event_repo = SQLiteEventRepository(session_factory=AsyncSessionLocal)
+_ingest_uc = IngestEventUseCase(event_store=_event_repo)
+_start_uc = StartSessionUseCase(session_repository=_session_repo, ingest_use_case=_ingest_uc)
+_stop_uc = StopSessionUseCase(session_repository=_session_repo, active_browsers=_start_uc.active_browsers)
+_status_uc = CaptureStatusUseCase(session_repository=_session_repo)
 
 
 async def start_capture_session_tool(
@@ -86,4 +82,53 @@ async def get_capture_status_tool(session_id: str) -> dict[str, Any]:
         data=status,
         session_id=session_id,
         source="browser_capture",
+    )
+
+
+async def list_sessions_tool(
+    task_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """MCP Tool: Liệt kê danh sách các phiên capture (Sessions) có metadata và số lượng sự kiện."""
+    raw_sessions = []
+    if task_id:
+        raw_sessions = await _session_repo.get_by_task_id(task_id)
+    else:
+        async with _session_repo.session_factory() as db:
+            stmt = select(SessionModel).order_by(SessionModel.started_at_ns.desc()).limit(limit).offset(offset)
+            res = await db.execute(stmt)
+            for obj in res.scalars().all():
+                raw_sessions.append({
+                    "id": obj.id,
+                    "source": obj.source,
+                    "name": obj.name,
+                    "target": obj.target,
+                    "status": obj.status,
+                    "task_id": obj.task_id,
+                    "started_at_ns": obj.started_at_ns,
+                    "ended_at_ns": obj.ended_at_ns,
+                })
+
+    sessions_data = []
+    for s in raw_sessions:
+        stats = await _session_repo.get_statistics(s["id"])
+        sessions_data.append({
+            "id": s["id"],
+            "session_id": s["id"],
+            "task_id": s.get("task_id"),
+            "name": s.get("name"),
+            "target": s.get("target"),
+            "status": (s.get("status") or "CREATED").upper(),
+            "started_at_ns": s.get("started_at_ns"),
+            "ended_at_ns": s.get("ended_at_ns"),
+            "event_count": stats.get("total_events", 0),
+            "requests_count": stats.get("network_requests", 0),
+        })
+
+    return create_mcp_response(
+        status="COMPLETED",
+        data={"sessions": sessions_data, "total_count": len(sessions_data)},
+        result_count=len(sessions_data),
+        source="session_discovery",
     )

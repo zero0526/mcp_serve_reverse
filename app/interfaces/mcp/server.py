@@ -7,6 +7,8 @@ capturing runtime events, analyzing call stacks & data lineages, and synthesizin
 from typing import Any
 from mcp.server.mcpserver import MCPServer
 
+from app.interfaces.mcp.instructions import MCP_SERVER_INSTRUCTIONS
+from app.interfaces.mcp.prompts import register_mcp_prompts
 from app.interfaces.mcp.resources import (
     get_lineage_resource,
     get_request_resource,
@@ -14,16 +16,20 @@ from app.interfaces.mcp.resources import (
 )
 from app.interfaces.mcp.tools.capture import (
     get_capture_status_tool,
+    list_sessions_tool,
     start_capture_session_tool,
     stop_capture_session_tool,
 )
 from app.interfaces.mcp.tools.graph import (
+    compact_graph_tool,
     get_graph_neighbors_tool,
     get_graph_node_tool,
     get_graph_statistics_tool,
+    rebuild_graph_tool,
 )
 from app.interfaces.mcp.tools.lineage import (
     compare_lineage_tool,
+    differential_analysis_tool,
     explain_lineage_path_tool,
     find_transformations_tool,
     trace_downstream_tool,
@@ -33,6 +39,7 @@ from app.interfaces.mcp.tools.network import (
     analyze_request_lineage_tool,
     compare_requests_tool,
     find_request_dependencies_tool,
+    list_requests_tool,
     summarize_request_tool,
 )
 from app.interfaces.mcp.tools.replay import (
@@ -41,6 +48,13 @@ from app.interfaces.mcp.tools.replay import (
     resolve_dependencies_tool,
     synthesize_code_tool,
     validate_replay_tool,
+)
+from app.interfaces.mcp.tools.task import (
+    get_task_tool,
+    get_tool_evolution_report_tool,
+    list_tasks_tool,
+    record_task_retrospective_tool,
+    update_task_status_tool,
 )
 from app.interfaces.mcp.tools.trace import (
     get_execution_context_tool,
@@ -51,7 +65,57 @@ from app.interfaces.mcp.tools.trace import (
 
 def create_mcp_server() -> MCPServer:
     """Tạo và đăng ký toàn bộ MCP Tools cho api_lineage."""
-    server = MCPServer("api_lineage")
+    server = MCPServer(
+        "api_lineage",
+        title="API Lineage & Web Reverse-Engineering Engine",
+        description="Enterprise runtime capture, property graph analysis, and code synthesis MCP Server.",
+        instructions=MCP_SERVER_INSTRUCTIONS,
+    )
+
+    # Đăng ký các Workflow Prompts cho MCP clients
+    register_mcp_prompts(server)
+
+    # 0. Task Management & MCP Evolution Tools
+    @server.tool()
+    async def get_task(task_id: str) -> dict[str, Any]:
+        """Lấy thông tin chi tiết nhiệm vụ (Task) kèm mục tiêu, chỉ dẫn, env vars và các session IDs."""
+        return await get_task_tool(task_id=task_id)
+
+    @server.tool()
+    async def list_tasks(status: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        """Liệt kê danh sách các Task có bộ lọc theo status."""
+        return await list_tasks_tool(status=status, limit=limit, offset=offset)
+
+    @server.tool()
+    async def update_task_status(task_id: str, status: str, notes: str | None = None) -> dict[str, Any]:
+        """Cập nhật trạng thái nhiệm vụ (CREATED, IN_PROGRESS, COMPLETED, FAILED)."""
+        return await update_task_status_tool(task_id=task_id, status=status, notes=notes)
+
+    @server.tool()
+    async def record_task_retrospective(
+        task_id: str,
+        agent_evaluation: str,
+        missing_tools: list[str] | None = None,
+        suggested_tools: list[dict[str, Any]] | None = None,
+        bottlenecks: list[str] | None = None,
+        efficiency_rating: int = 5,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Ghi nhận nhận xét hồi cứu của Agent về hiệu quả MCP Tools và đề xuất công cụ mới để tiến hóa."""
+        return await record_task_retrospective_tool(
+            task_id=task_id,
+            agent_evaluation=agent_evaluation,
+            missing_tools=missing_tools,
+            suggested_tools=suggested_tools,
+            bottlenecks=bottlenecks,
+            efficiency_rating=efficiency_rating,
+            session_id=session_id,
+        )
+
+    @server.tool()
+    async def get_tool_evolution_report(task_id: str | None = None) -> dict[str, Any]:
+        """Tổng hợp báo cáo các công cụ MCP còn thiếu và đề xuất cải tiến từ nhật ký hồi cứu."""
+        return await get_tool_evolution_report_tool(task_id=task_id)
 
     # 1. Capture Tools
     @server.tool()
@@ -76,6 +140,15 @@ def create_mcp_server() -> MCPServer:
     async def get_capture_status(session_id: str) -> dict[str, Any]:
         """Xem trạng thái và thống kê sự kiện của phiên capture."""
         return await get_capture_status_tool(session_id=session_id)
+
+    @server.tool()
+    async def list_sessions(
+        task_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Liệt kê danh sách các phiên capture (Sessions) có trong database kèm số lượng events."""
+        return await list_sessions_tool(task_id=task_id, limit=limit, offset=offset)
 
     # 2. Trace Tools
     @server.tool()
@@ -185,6 +258,28 @@ def create_mcp_server() -> MCPServer:
             include_orphans=include_orphans,
         )
 
+    @server.tool()
+    async def rebuild_graph(session_id: str) -> dict[str, Any]:
+        """Tái thiết lập và xây dựng lại toàn bộ đồ thị từ SQLite raw trace events."""
+        return await rebuild_graph_tool(session_id=session_id)
+
+    @server.tool()
+    async def compact_graph(
+        session_id: str,
+        prune_static: bool = True,
+        prune_internals: bool = True,
+        prune_isolated: bool = True,
+        keep_node_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Tinh gọn và cắt tỉa đồ thị: loại bỏ file tĩnh, framework internals và node cô lập."""
+        return await compact_graph_tool(
+            session_id=session_id,
+            prune_static=prune_static,
+            prune_internals=prune_internals,
+            prune_isolated=prune_isolated,
+            keep_node_ids=keep_node_ids,
+        )
+
     # 4. Lineage Analysis Tools
     @server.tool()
     async def trace_origin(
@@ -271,6 +366,11 @@ def create_mcp_server() -> MCPServer:
             include_arguments=include_arguments,
         )
 
+    @server.tool()
+    async def differential_analysis(task_id: str) -> dict[str, Any]:
+        """So sánh các session của cùng một task để phân loại tham số (STATIC, TIME_DEPENDENT, USER_INPUT, HASH_SIGNATURE)."""
+        return await differential_analysis_tool(task_id=task_id)
+
     # 5. Network Analysis Tools
     @server.tool()
     async def summarize_request(
@@ -334,6 +434,23 @@ def create_mcp_server() -> MCPServer:
             right_session_id=right_session_id,
             right_request_id=right_request_id,
             redaction_mode=redaction_mode,
+        )
+
+    @server.tool()
+    async def list_requests(
+        session_id: str,
+        method: str | None = None,
+        url_keyword: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Liệt kê và lọc các HTTP request trong một session (hỗ trợ filter method, url keyword, pagination)."""
+        return await list_requests_tool(
+            session_id=session_id,
+            method=method,
+            url_keyword=url_keyword,
+            limit=limit,
+            offset=offset,
         )
 
     # 6. Replay Engine Tools

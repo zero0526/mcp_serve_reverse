@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "api_lineage": {
+      "command": ".venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "app.main",
+        "run-mcp",
+        "--transport",
+        "stdio"
+      ],
+      "env": {
+        "PYTHONPATH": ".",
+        "PYTHONIOENCODING": "utf-8"
+      }
+    }
+  }
+}

@@ -54,6 +54,17 @@ from app.application.replay.resolve_dependencies import ResolveDependenciesUseCa
 from app.application.replay.synthesize_code import SynthesizeCodeUseCase
 from app.application.replay.validate_replay import ValidateReplayUseCase
 
+from app.adapters.persistence.sqlite.session_log_repository import SQLiteSessionLogRepository
+from app.adapters.persistence.sqlite.task_repository import SQLiteTaskRepository
+
+# Task & Evolution Use Cases
+from app.application.task.create_task import CreateTaskUseCase
+from app.application.task.get_evolution_report import GetToolEvolutionReportUseCase
+from app.application.task.get_task import GetTaskUseCase
+from app.application.task.list_tasks import ListTasksUseCase
+from app.application.task.record_retrospective import RecordTaskRetrospectiveUseCase
+from app.application.task.update_task import UpdateTaskUseCase
+
 from app.infrastructure.serialization.redaction import RedactionEngine, redaction_engine
 from app.interfaces.mcp.context import TruncationGuard, default_truncation_guard
 from app.interfaces.mcp.server import create_mcp_server
@@ -68,6 +79,8 @@ class ApplicationContainer:
     session_repository: SQLiteSessionRepository
     event_repository: SQLiteEventRepository
     graph_repository: SQLiteGraphRepository
+    task_repository: SQLiteTaskRepository
+    session_log_repository: SQLiteSessionLogRepository
 
     # Adapters & Services
     http_executor: HttpxReplayExecutor
@@ -76,6 +89,14 @@ class ApplicationContainer:
     event_normalizer: EventNormalizer
     graph_projector: GraphProjector
     truncation_guard: TruncationGuard
+
+    # Task Management & MCP Evolution
+    create_task_uc: CreateTaskUseCase
+    get_task_uc: GetTaskUseCase
+    list_tasks_uc: ListTasksUseCase
+    update_task_uc: UpdateTaskUseCase
+    record_retrospective_uc: RecordTaskRetrospectiveUseCase
+    get_evolution_report_uc: GetToolEvolutionReportUseCase
 
     # Phase 1: Capture & Ingest
     start_session_uc: StartSessionUseCase
@@ -127,6 +148,24 @@ def bootstrap_container(session_factory=AsyncSessionLocal) -> ApplicationContain
     session_repo = SQLiteSessionRepository(session_factory=session_factory)
     event_repo = SQLiteEventRepository(session_factory=session_factory)
     graph_repo = SQLiteGraphRepository(session_factory=session_factory)
+    task_repo = SQLiteTaskRepository(session_factory=session_factory)
+    session_log_repo = SQLiteSessionLogRepository(session_factory=session_factory)
+
+    # 1.1 Task & Evolution Use Cases
+    create_task_uc = CreateTaskUseCase(
+        task_repository=task_repo,
+        session_repository=session_repo,
+        session_factory=session_factory,
+    )
+    get_task_uc = GetTaskUseCase(task_repository=task_repo, session_factory=session_factory)
+    list_tasks_uc = ListTasksUseCase(task_repository=task_repo, session_factory=session_factory)
+    update_task_uc = UpdateTaskUseCase(task_repository=task_repo, session_factory=session_factory)
+    record_retro_uc = RecordTaskRetrospectiveUseCase(
+        session_log_repository=session_log_repo, session_factory=session_factory
+    )
+    get_evolution_uc = GetToolEvolutionReportUseCase(
+        session_log_repository=session_log_repo, session_factory=session_factory
+    )
 
     # 2. Adapters
     http_executor = HttpxReplayExecutor()
@@ -220,12 +259,20 @@ def bootstrap_container(session_factory=AsyncSessionLocal) -> ApplicationContain
         session_repository=session_repo,
         event_repository=event_repo,
         graph_repository=graph_repo,
+        task_repository=task_repo,
+        session_log_repository=session_log_repo,
         http_executor=http_executor,
         redaction_engine=redactor,
         event_validator=validator,
         event_normalizer=normalizer,
         graph_projector=projector,
         truncation_guard=trunc_guard,
+        create_task_uc=create_task_uc,
+        get_task_uc=get_task_uc,
+        list_tasks_uc=list_tasks_uc,
+        update_task_uc=update_task_uc,
+        record_retrospective_uc=record_retro_uc,
+        get_evolution_report_uc=get_evolution_uc,
         start_session_uc=start_session_uc,
         stop_session_uc=stop_session_uc,
         capture_status_uc=capture_status_uc,

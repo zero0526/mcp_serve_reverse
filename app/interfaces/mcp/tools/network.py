@@ -1,7 +1,9 @@
 from typing import Any
+from sqlalchemy import select
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.graph_repository import SQLiteGraphRepository
+from app.adapters.persistence.sqlite.models import NetworkRequestModel, NetworkResponseModel
 from app.application.network.analyze_request_lineage import AnalyzeRequestLineageUseCase
 from app.application.network.compare_requests import CompareRequestsUseCase
 from app.application.network.find_request_dependencies import FindRequestDependenciesUseCase
@@ -122,4 +124,48 @@ async def compare_requests_tool(
         session_id=left_session_id,
         redaction_mode=redaction_mode,
         source="network_analysis",
+    )
+
+
+async def list_requests_tool(
+    session_id: str,
+    method: str | None = None,
+    url_keyword: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """MCP Tool: Liệt kê danh sách các HTTP Requests đã bắt được trong session có lọc theo method và url keyword."""
+    async with AsyncSessionLocal() as db:
+        stmt = select(NetworkRequestModel).where(NetworkRequestModel.session_id == session_id)
+        if method:
+            stmt = stmt.where(NetworkRequestModel.method == method.upper())
+        if url_keyword:
+            stmt = stmt.where(NetworkRequestModel.url.ilike(f"%{url_keyword}%"))
+
+        stmt = stmt.order_by(NetworkRequestModel.started_at_ns.asc()).limit(limit).offset(offset)
+        requests = (await db.execute(stmt)).scalars().all()
+
+        results = []
+        for r in requests:
+            # Query response status nếu có
+            resp_stmt = select(NetworkResponseModel.status_code).where(NetworkResponseModel.request_id == r.id)
+            status_code = (await db.execute(resp_stmt)).scalar_one_or_none()
+
+            results.append({
+                "request_id": r.id,
+                "session_id": r.session_id,
+                "method": r.method,
+                "url": r.url,
+                "path": r.path,
+                "status_code": status_code,
+                "has_payload": bool(r.body_json and r.body_json != "{}"),
+                "started_at_ns": r.started_at_ns,
+            })
+
+    return create_mcp_response(
+        status="COMPLETED",
+        data={"requests": results, "total_count": len(results)},
+        session_id=session_id,
+        result_count=len(results),
+        source="network_discovery",
     )

@@ -3,6 +3,7 @@ from typing import Any
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.graph_repository import SQLiteGraphRepository
 from app.application.lineage.compare_lineage import CompareLineageUseCase
+from app.application.lineage.differential_analysis import DifferentialAnalysisUseCase
 from app.application.lineage.explain_path import ExplainLineagePathUseCase
 from app.application.lineage.find_transformations import FindTransformationsUseCase
 from app.application.lineage.trace_downstream import TraceDownstreamUseCase
@@ -15,6 +16,7 @@ _downstream_uc = TraceDownstreamUseCase(graph_repo=_graph_repo)
 _explain_uc = ExplainLineagePathUseCase(graph_repo=_graph_repo)
 _compare_uc = CompareLineageUseCase(graph_repo=_graph_repo)
 _transform_uc = FindTransformationsUseCase(graph_repository=_graph_repo)
+_differential_uc = DifferentialAnalysisUseCase(session_factory=AsyncSessionLocal)
 
 
 async def trace_origin_tool(
@@ -142,4 +144,35 @@ async def find_transformations_tool(
         session_id=session_id,
         result_count=res.get("count", 0),
         source="lineage_transformations",
+    )
+
+
+async def differential_analysis_tool(task_id: str) -> dict[str, Any]:
+    """MCP Tool: So sánh vi phân đa phiên thuộc cùng Task ID để tự động phân loại tham số:
+    CONSTANT, TIMESTAMP, SESSION_TOKEN, EPHEMERAL_NONCE, USER_INPUT.
+    """
+    res = await _differential_uc.execute(task_id=task_id)
+    data = {
+        "task_id": res.task_id,
+        "session_ids": res.session_ids,
+        "classified_variables": res.classified_variables,
+        "classified_tokens": res.classified_tokens,
+        "classified_constants": res.classified_constants,
+        "summary": res.summary,
+        "variances": [
+            {
+                "path": v.path,
+                "param_type": v.param_type.value if hasattr(v.param_type, "value") else str(v.param_type),
+                "is_constant": v.is_constant,
+                "inferred_purpose": v.inferred_purpose,
+                "values_per_session": v.values_per_session,
+            }
+            for v in res.variances
+        ],
+    }
+    return create_mcp_response(
+        status="COMPLETED",
+        data=data,
+        result_count=len(res.variances),
+        source="differential_analysis",
     )

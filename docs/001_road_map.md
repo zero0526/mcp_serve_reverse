@@ -183,23 +183,22 @@ Sau khi rà soát toàn bộ 23 MCP Tools và 3 MCP Resources hiện có so vớ
 
 ---
 
-### 1. Thiếu các Tool Khám phá & Điều hướng Dữ liệu (Discovery Tools) — *Điểm thiếu quan trọng nhất*
+### 1. Tool Khám phá & Điều hướng Dữ liệu (Discovery Tools) — ✅ *ĐÃ HOÀN THÀNH*
 
-Hiện tại, hầu hết các tool đều yêu cầu Agent phải biết trước `session_id` hoặc `request_id`. Nếu một người dùng mới mở chat và nói *"Hãy phân tích cho tôi các request trong phiên capture gần nhất"*, Agent sẽ bị lúng túng vì:
-- ❌ **Chưa có tool `list_sessions`**: Không có cách nào để LLM liệt kê danh sách các phiên capture trong database (kèm metadata: URL mục tiêu, thời gian bắt đầu, số lượng event, status).
-- ❌ **Chưa có tool `list_requests`**: Một session có thể bắt hàng trăm request (ảnh, css, xhr, fetch). Hiện tại LLM chỉ có thể gọi `search_trace_events` thô rất tốn context window, hoặc phải biết trước `request_id` mới gọi được `summarize_request`. Tool `list_requests(session_id, method, url_keyword, limit)` sẽ giúp LLM lọc nhanh ra các API JSON/XHR cốt lõi cần mổ xẻ.
+- ✅ **`list_sessions`** ([capture.py](file:///d:/source_code/mcp_serve_reverse/app/interfaces/mcp/tools/capture.py)): Cho phép LLM liệt kê danh sách các phiên capture trong database (kèm metadata: URL mục tiêu, thời gian bắt đầu, số lượng event, network requests, status).
+- ✅ **`list_requests`** ([network.py](file:///d:/source_code/mcp_serve_reverse/app/interfaces/mcp/tools/network.py)): Cho phép LLM duyệt danh sách request trong session có bộ lọc `method` (GET/POST/...), `url_keyword` và phân trang `limit/offset`.
 
 ---
 
-### 2. Các Use Case nghiệp vụ lõi đã triển khai nhưng CHƯA phơi ra (expose) thành MCP Tool
+### 2. Các Use Case nghiệp vụ lõi đã phơi ra (expose) thành MCP Tool — ✅ *ĐÃ HOÀN THÀNH*
 
-Trong tầng `app/application/`, chúng ta đã viết các use case rất mạnh nhưng chưa được đăng ký trong [app/interfaces/mcp/server.py](file:///d:/source_code/mcp_serve_reverse/app/interfaces/mcp/server.py):
+Đã triển khai tool functions và đăng ký đầy đủ vào [app/interfaces/mcp/server.py](file:///d:/source_code/mcp_serve_reverse/app/interfaces/mcp/server.py):
 
-| Use Case đã có | Tệp nguồn | Giá trị mang lại nếu expose thành MCP Tool |
-| :--- | :--- | :--- |
-| **`differential_analysis`** | [differential_analysis.py](file:///d:/source_code/mcp_serve_reverse/app/application/lineage/differential_analysis.py) | **Cực kỳ quan trọng**: Cho phép LLM so sánh các session của cùng một `task_id` (Session 1 tên A, Session 2 tên B) để tự động nhận diện tham số nào là `STATIC`, `TIME_DEPENDENT`, `USER_INPUT`, `HASH_SIGNATURE`. Hiện tại mới chỉ được gọi ngầm bên trong `ReplaySpec`. |
-| **`rebuild_graph`** | [rebuild_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/rebuild_graph.py) | Cho phép LLM yêu cầu xây dựng lại đồ thị từ SQLite raw trace events khi cập nhật heuristic hoặc sau khi capture thêm. Hiện mới chỉ có trên CLI. |
-| **`compact_graph`** | [compact_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/compact_graph.py) | Cho phép LLM chủ động lọc bỏ các node rác (file tĩnh `.png`, `.css`, các node cô lập) trước khi truy vấn đồ thị để tránh tràn context window. |
+| Use Case | Tệp nguồn | MCP Tool | Trạng thái |
+| :--- | :--- | :--- | :--- |
+| **`differential_analysis`** | [differential_analysis.py](file:///d:/source_code/mcp_serve_reverse/app/application/lineage/differential_analysis.py) | `@server.tool() differential_analysis(task_id)` | ✅ Đã phơi ra MCP Tool & 100% Passed Test |
+| **`rebuild_graph`** | [rebuild_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/rebuild_graph.py) | `@server.tool() rebuild_graph(session_id)` | ✅ Đã phơi ra MCP Tool & 100% Passed Test |
+| **`compact_graph`** | [compact_graph.py](file:///d:/source_code/mcp_serve_reverse/app/application/graph/compact_graph.py) | `@server.tool() compact_graph(session_id, ...)` | ✅ Đã phơi ra MCP Tool & 100% Passed Test |
 
 ---
 

@@ -1,0 +1,92 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-base: #070b14;
+    --bg-surface: #0f172a;
+    --bg-elevated: #111a2e;
+    --border-subtle: rgba(148, 163, 184, 0.12);
+  }
+
+  body {
+    background-color: #070b14;
+    color: #f1f5f9;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #070b14;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* Glassmorphism Card Utility */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.glass-panel-elevated {
+  background: rgba(17, 26, 46, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+/* React Flow Dark Mode Overrides */
+.react-flow {
+  background-color: #070b14 !important;
+}
+
+.react-flow__background {
+  background-color: #070b14 !important;
+}
+
+.react-flow__edge-path {
+  stroke: #475569 !important;
+  stroke-width: 1.5px !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #6366f1 !important;
+  stroke-width: 2.5px !important;
+}
+
+.react-flow__controls {
+  background: #0f172a !important;
+  border: 1px solid rgba(148, 163, 184, 0.15) !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+  border-radius: 8px !important;
+}
+
+.react-flow__controls-button {
+  background: #0f172a !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1) !important;
+  fill: #cbd5e1 !important;
+}
+
+.react-flow__controls-button:hover {
+  background: #1e293b !important;
+  fill: #ffffff !important;
+}
+
+.react-flow__minimap {
+  background: rgba(15, 23, 42, 0.85) !important;
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(148, 163, 184, 0.15) !important;
+  border-radius: 8px !important;
+}

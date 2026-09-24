@@ -2,17 +2,21 @@ from typing import Any
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.graph_repository import SQLiteGraphRepository
+from app.application.graph.compact_graph import CompactGraphUseCase
 from app.application.graph.query_graph_nodes import (
     GetGraphNeighborsUseCase,
     GetGraphNodeUseCase,
     GetGraphStatisticsUseCase,
 )
+from app.application.graph.rebuild_graph import RebuildGraphUseCase
 from app.interfaces.mcp.schemas.responses import create_mcp_response
 
 _graph_repo = SQLiteGraphRepository(session_factory=AsyncSessionLocal)
 _node_uc = GetGraphNodeUseCase(graph_repo=_graph_repo)
 _neighbors_uc = GetGraphNeighborsUseCase(graph_repo=_graph_repo)
 _stats_uc = GetGraphStatisticsUseCase(graph_repo=_graph_repo)
+_rebuild_uc = RebuildGraphUseCase(graph_repository=_graph_repo, session_factory=AsyncSessionLocal)
+_compact_uc = CompactGraphUseCase(graph_repository=_graph_repo, session_factory=AsyncSessionLocal)
 
 
 async def get_graph_node_tool(
@@ -86,4 +90,42 @@ async def get_graph_statistics_tool(
         data=res,
         session_id=session_id,
         source="graph_query",
+    )
+
+
+async def rebuild_graph_tool(session_id: str) -> dict[str, Any]:
+    """MCP Tool: Xóa bỏ toàn bộ graph cũ của session và tái thiết lập lại từ SQLite raw trace events."""
+    res = await _rebuild_uc.execute(session_id=session_id)
+    return create_mcp_response(
+        status="COMPLETED",
+        data=res,
+        session_id=session_id,
+        result_count=res.get("nodes_count", 0),
+        source="graph_rebuild",
+    )
+
+
+async def compact_graph_tool(
+    session_id: str,
+    prune_static: bool = True,
+    prune_internals: bool = True,
+    prune_isolated: bool = True,
+    keep_node_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    """MCP Tool: Tinh gọn và cắt tỉa đồ thị: loại bỏ file tĩnh (.css, .png), framework internals và node cô lập."""
+    res = await _compact_uc.execute(
+        session_id=session_id,
+        options={
+            "prune_static": prune_static,
+            "prune_internals": prune_internals,
+            "prune_isolated": prune_isolated,
+            "keep_node_ids": keep_node_ids or [],
+        },
+    )
+    return create_mcp_response(
+        status="COMPLETED",
+        data=res,
+        session_id=session_id,
+        result_count=res.get("remaining_nodes_count", 0),
+        source="graph_compaction",
     )

@@ -67,8 +67,16 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Tự động khởi tạo schema cơ sở dữ liệu nếu chưa tồn tại."""
+    from sqlalchemy import text
     from app.adapters.persistence.sqlite.models import Base
 
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        try:
+            res = await conn.execute(text("PRAGMA table_info(sessions)"))
+            columns = [row[1] for row in res.fetchall()]
+            if "task_id" not in columns:
+                await conn.execute(text("ALTER TABLE sessions ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE CASCADE"))
+        except Exception:
+            pass
 

@@ -47,6 +47,9 @@ def test_bootstrap_container_wiring():
     assert container.mcp_server is not None
     assert len(container.mcp_server._tool_manager._tools) >= 23
     assert len(container.mcp_server._resource_manager._templates) >= 3
+    assert len(container.mcp_server._prompt_manager._prompts) >= 3
+    assert container.mcp_server.instructions is not None
+    assert "Tool Selection Decision Matrix" in container.mcp_server.instructions
 
 
 def test_cli_parser_subcommands():

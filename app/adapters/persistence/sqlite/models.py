@@ -12,12 +12,42 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.adapters.persistence.sqlite.connection import Base
 
 
+class TaskModel(Base):
+    """Bảng quản lý các nhiệm vụ phân tích đảo ngược (Tasks)."""
+
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    goal_description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    instructions: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    env_vars_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    initial_urls_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    browser_config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="CREATED", index=True)
+
+    created_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    updated_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+    # Relationships
+    sessions: Mapped[list["SessionModel"]] = relationship(
+        "SessionModel", back_populates="task", cascade="all, delete-orphan"
+    )
+    logs: Mapped[list["SessionLogModel"]] = relationship(
+        "SessionLogModel", back_populates="task", cascade="all, delete-orphan"
+    )
+
+
 class SessionModel(Base):
     """Bảng lưu các phiên capture (browser hoặc android)."""
 
     __tablename__ = "sessions"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    task_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     source: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
     target: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,6 +61,10 @@ class SessionModel(Base):
     metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
 
     # Relationships
+    task: Mapped["TaskModel | None"] = relationship("TaskModel", back_populates="sessions")
+    session_logs: Mapped[list["SessionLogModel"]] = relationship(
+        "SessionLogModel", back_populates="session", cascade="all, delete-orphan"
+    )
     trace_events: Mapped[list["TraceEventModel"]] = relationship(
         "TraceEventModel", back_populates="session", cascade="all, delete-orphan"
     )
@@ -49,6 +83,34 @@ class SessionModel(Base):
     graph_edges: Mapped[list["GraphEdgeModel"]] = relationship(
         "GraphEdgeModel", back_populates="session", cascade="all, delete-orphan"
     )
+
+
+class SessionLogModel(Base):
+    """Bảng lưu trữ nhật ký hồi cứu và đánh giá tiến hóa MCP tools của Agent."""
+
+    __tablename__ = "session_logs"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    task_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
+    log_type: Mapped[str] = mapped_column(Text, nullable=False, default="RETROSPECTIVE", index=True)
+    agent_evaluation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    missing_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    suggested_tools_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    bottlenecks_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    efficiency_rating: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+
+    created_at_ns: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    metadata_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+
+    # Relationships
+    task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="logs")
+    session: Mapped["SessionModel | None"] = relationship("SessionModel", back_populates="session_logs")
 
 
 class TraceEventModel(Base):
