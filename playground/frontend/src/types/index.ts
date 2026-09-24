@@ -1,6 +1,14 @@
 export type TaskStatus = "CREATED" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
 export type SessionStatus = "CREATED" | "RUNNING" | "STOPPED" | "FAILED" | "COMPLETED";
 
+export type EnvVarLocation = "header" | "url" | "body";
+
+export interface EnvVarItem {
+  name: string;
+  value: any;
+  location: EnvVarLocation;
+}
+
 export interface BrowserConfig {
   headless: boolean;
   use_cloakbrowser: boolean;
@@ -18,6 +26,7 @@ export interface Task {
   goal_description: string;
   instructions: string;
   env_vars: Record<string, any>;
+  env_vars_items?: EnvVarItem[];
   initial_urls: string[];
   browser_config: BrowserConfig;
   status: TaskStatus;

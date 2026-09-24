@@ -14,7 +14,7 @@ class TaskRepositoryPort(ABC):
         name: str,
         goal_description: str = "",
         instructions: str = "",
-        env_vars: dict[str, Any] | None = None,
+        env_vars: dict[str, Any] | list[Any] | None = None,
         initial_urls: list[str] | None = None,
         browser_config: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,

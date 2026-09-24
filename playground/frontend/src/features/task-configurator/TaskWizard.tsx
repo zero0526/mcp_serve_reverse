@@ -27,8 +27,8 @@ export const TaskWizard: React.FC = () => {
   const [headless, setHeadless] = useState(false);
   const [useCloakBrowser, setUseCloakBrowser] = useState(true);
   const [userAgent, setUserAgent] = useState("");
-  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string }>>([
-    { key: "ANTI_BOT_BYPASS", value: "strict" },
+  const [envVars, setEnvVars] = useState<Array<{ key: string; value: string; location: "header" | "url" | "body" }>>([
+    { key: "ANTI_BOT_BYPASS", value: "strict", location: "header" },
   ]);
 
   const [urlsInput, setUrlsInput] = useState(
@@ -41,16 +41,16 @@ export const TaskWizard: React.FC = () => {
     .filter((u) => u.length > 0);
 
   const handleAddEnvVar = () => {
-    setEnvVars([...envVars, { key: "", value: "" }]);
+    setEnvVars([...envVars, { key: "", value: "", location: "header" }]);
   };
 
   const handleRemoveEnvVar = (idx: number) => {
     setEnvVars(envVars.filter((_, i) => i !== idx));
   };
 
-  const handleEnvVarChange = (idx: number, field: "key" | "value", val: string) => {
+  const handleEnvVarChange = (idx: number, field: "key" | "value" | "location", val: string) => {
     const next = [...envVars];
-    next[idx][field] = val;
+    next[idx] = { ...next[idx], [field]: val };
     setEnvVars(next);
   };
 
@@ -60,18 +60,19 @@ export const TaskWizard: React.FC = () => {
       return;
     }
 
-    const envMap: Record<string, string> = {};
-    for (const item of envVars) {
-      if (item.key.trim()) {
-        envMap[item.key.trim()] = item.value.trim();
-      }
-    }
+    const structuredEnvVars = envVars
+      .filter((item) => item.key.trim())
+      .map((item) => ({
+        name: item.key.trim(),
+        value: item.value.trim(),
+        location: item.location || "header",
+      }));
 
     await createTask({
       name: name.trim(),
       goal_description: goalDescription.trim(),
       instructions: instructions.trim(),
-      env_vars: envMap,
+      env_vars: structuredEnvVars,
       initial_urls: parsedUrls,
       browser_config: {
         headless,
@@ -357,6 +358,16 @@ export const TaskWizard: React.FC = () => {
                           onChange={(e) => handleEnvVarChange(idx, "value", e.target.value)}
                           className="flex-1 bg-background-elevated border border-border-subtle rounded-md px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-500 font-mono focus:outline-none focus:border-indigo-500"
                         />
+                        <select
+                          value={env.location}
+                          onChange={(e) => handleEnvVarChange(idx, "location", e.target.value)}
+                          className="bg-background-elevated border border-border-subtle rounded-md px-2 py-1.5 text-xs text-indigo-300 font-mono focus:outline-none focus:border-indigo-500"
+                          title="Vị trí gắn biến: Header, URL Param, hoặc Body"
+                        >
+                          <option value="header">Header</option>
+                          <option value="url">URL Param</option>
+                          <option value="body">Body</option>
+                        </select>
                         <button
                           type="button"
                           onClick={() => handleRemoveEnvVar(idx)}

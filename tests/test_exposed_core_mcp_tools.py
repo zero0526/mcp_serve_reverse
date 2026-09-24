@@ -30,6 +30,7 @@ def test_mcp_server_registers_all_new_tools():
     assert "compact_graph" in registered_tools
     assert "list_sessions" in registered_tools
     assert "list_requests" in registered_tools
+    assert "detect_security_challenges" in registered_tools
 
 
 @pytest.mark.asyncio

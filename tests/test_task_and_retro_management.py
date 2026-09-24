@@ -12,7 +12,13 @@ from app.application.task.get_task import GetTaskUseCase
 from app.application.task.list_tasks import ListTasksUseCase
 from app.application.task.record_retrospective import RecordTaskRetrospectiveUseCase
 from app.application.task.update_task import UpdateTaskUseCase
-from app.domain.task.entities import TaskStatus
+from app.domain.task.entities import (
+    EnvVarItem,
+    EnvVarLocation,
+    TaskStatus,
+    append_query_params,
+    parse_env_vars,
+)
 from app.interfaces.mcp.tools.task import (
     get_task_tool,
     get_tool_evolution_report_tool,
@@ -195,3 +201,101 @@ async def test_mcp_tools_task_layer():
     evo_res = await get_tool_evolution_report_tool(task_id=tid)
     assert evo_res["status"] == "COMPLETED"
     assert evo_res["data"]["total_retrospectives"] >= 1
+
+
+def test_env_vars_parsing_and_task_methods():
+    """Kiểm tra parser EnvVarItem và các phương thức trích xuất header, url_param, body của Task."""
+    raw_env_list = [
+        {"name": "Authorization", "value": "Bearer token_123", "location": "header"},
+        {"key": "app_version", "value": "1.0.4", "location": "param"},  # key alias và param location alias
+        {"name": "deviceId", "value": "dev_abc999", "location": "body"},
+        {"name": "X-Custom-Trace", "value": "trace-xyz"},  # mặc định là header
+    ]
+
+    items = parse_env_vars(raw_env_list)
+    assert len(items) == 4
+    assert items[0].location == EnvVarLocation.HEADER
+    assert items[1].name == "app_version"
+    assert items[1].location == EnvVarLocation.URL
+    assert items[2].location == EnvVarLocation.BODY
+    assert items[3].location == EnvVarLocation.HEADER
+
+    from app.domain.task.entities import Task
+
+    task = Task(
+        id="task_env_test",
+        name="Env Test",
+        goal_description="Test env vars",
+        instructions="None",
+        env_vars=raw_env_list,
+    )
+
+    # Đảm bảo truy cập dạng dict hoạt động
+    assert task.env_vars["Authorization"] == "Bearer token_123"
+    assert task.env_vars["app_version"] == "1.0.4"
+    assert task.env_vars["deviceId"] == "dev_abc999"
+
+    # Đảm bảo phân loại theo vị trí hoạt động chính xác
+    headers = task.get_env_headers()
+    assert headers == {
+        "Authorization": "Bearer token_123",
+        "X-Custom-Trace": "trace-xyz",
+    }
+
+    url_params = task.get_env_url_params()
+    assert url_params == {"app_version": "1.0.4"}
+
+    body_params = task.get_env_body_params()
+    assert body_params == {"deviceId": "dev_abc999"}
+
+    # Kiểm tra helper append_query_params
+    modified_url = append_query_params("https://example.com/api/v1?page=1", url_params)
+    assert "page=1" in modified_url
+    assert "app_version=1.0.4" in modified_url
+
+
+@pytest.mark.asyncio
+async def test_structured_env_vars_task_persistence(test_session_factory):
+    """Kiểm tra lưu trữ và truy vấn Task với cấu trúc env_vars qua SQLiteTaskRepository."""
+    task_repo = SQLiteTaskRepository(session_factory=test_session_factory)
+    sess_repo = SQLiteSessionRepository(session_factory=test_session_factory)
+    create_uc = CreateTaskUseCase(task_repository=task_repo, session_repository=sess_repo)
+
+    env_config = [
+        {"name": "X-Api-Key", "value": "secret_key_888", "location": "header"},
+        {"name": "client_id", "value": "client_web", "location": "url"},
+        {"name": "fingerprint", "value": "fp_canvas_123", "location": "body"},
+    ]
+
+    task = await create_uc.execute(
+        task_id="task_structured_env",
+        name="Task with Structured Env Vars",
+        goal_description="Verify SQLite persistence and session attachment",
+        instructions="None",
+        env_vars=env_config,
+        initial_urls=["https://example.com/login", "https://example.com/feed"],
+    )
+
+    # Kiểm tra task entity trả về từ create_uc
+    assert task.id == "task_structured_env"
+    assert task.env_vars["X-Api-Key"] == "secret_key_888"
+    assert task.get_env_headers() == {"X-Api-Key": "secret_key_888"}
+    assert task.get_env_url_params() == {"client_id": "client_web"}
+    assert task.get_env_body_params() == {"fingerprint": "fp_canvas_123"}
+
+    # Truy vấn lại từ DB qua SQLiteTaskRepository.get_by_id
+    fetched = await task_repo.get_by_id("task_structured_env")
+    assert fetched is not None
+    assert fetched.env_vars["X-Api-Key"] == "secret_key_888"
+    assert len(fetched.parsed_env_vars) == 3
+    assert fetched.get_env_headers() == {"X-Api-Key": "secret_key_888"}
+    assert fetched.get_env_url_params() == {"client_id": "client_web"}
+    assert fetched.get_env_body_params() == {"fingerprint": "fp_canvas_123"}
+
+    # Kiểm tra metadata của các session con được tạo kèm có chứa env_vars
+    for sid in fetched.session_ids:
+        sess = await sess_repo.get_by_id(sid)
+        assert sess is not None
+        assert "env_vars" in sess["metadata"]
+        assert len(sess["metadata"]["env_vars"]) == 3
+

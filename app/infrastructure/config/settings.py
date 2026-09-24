@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     sessions_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "sessions")
     secrets_dir: Path = Field(default_factory=lambda: BASE_DIR / "data" / "secrets")
 
+    OVERSIZE_THRESHOLD: int = 16384
     # Database
     db_file_name: str = "lineage.db"
 

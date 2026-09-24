@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "api_lineage": {
-      "command": ".venv\\Scripts\\python.exe",
+      "command": ".venv/bin/python",
       "args": [
         "-m",
         "app.main",

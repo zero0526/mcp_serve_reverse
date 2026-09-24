@@ -31,7 +31,7 @@ export const api = {
     name: string;
     goal_description: string;
     instructions: string;
-    env_vars?: Record<string, any>;
+    env_vars?: Record<string, any> | Array<{ name: string; value: any; location?: string }>;
     initial_urls?: string[];
     browser_config?: Record<string, any>;
     task_id?: string;

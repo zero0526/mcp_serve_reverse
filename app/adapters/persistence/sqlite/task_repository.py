@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.models import SessionModel, TaskModel
-from app.domain.task.entities import BrowserConfig, Task, TaskStatus
+from app.domain.task.entities import BrowserConfig, EnvVarItem, Task, TaskStatus, parse_env_vars
 from app.infrastructure.serialization.json import safe_dumps, safe_loads
 from app.ports.task_repository import TaskRepositoryPort
 
@@ -19,7 +19,10 @@ class SQLiteTaskRepository(TaskRepositoryPort):
         self.session_factory = session_factory
 
     def _to_entity(self, model: TaskModel) -> Task:
-        env_vars = safe_loads(model.env_vars_json) if model.env_vars_json else {}
+        raw_env_vars = safe_loads(model.env_vars_json) if model.env_vars_json else []
+        env_items = parse_env_vars(raw_env_vars)
+        env_vars_dict = {item.name: item.value for item in env_items}
+
         initial_urls = safe_loads(model.initial_urls_json) if model.initial_urls_json else []
         b_cfg_dict = safe_loads(model.browser_config_json) if model.browser_config_json else {}
         metadata = safe_loads(model.metadata_json) if model.metadata_json else {}
@@ -34,7 +37,8 @@ class SQLiteTaskRepository(TaskRepositoryPort):
             name=model.name,
             goal_description=model.goal_description,
             instructions=model.instructions,
-            env_vars=env_vars,
+            env_vars=env_vars_dict,
+            env_vars_items=env_items,
             initial_urls=initial_urls,
             browser_config=BrowserConfig(**b_cfg_dict),
             status=TaskStatus(model.status) if model.status in TaskStatus._value2member_map_ else TaskStatus.CREATED,
@@ -50,18 +54,21 @@ class SQLiteTaskRepository(TaskRepositoryPort):
         name: str,
         goal_description: str = "",
         instructions: str = "",
-        env_vars: dict[str, Any] | None = None,
+        env_vars: dict[str, Any] | list[Any] | None = None,
         initial_urls: list[str] | None = None,
         browser_config: dict[str, Any] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> Task:
         now_ns = time.time_ns()
+        parsed_items = parse_env_vars(env_vars)
+        env_vars_serialized = [it.model_dump() for it in parsed_items]
+
         task_model = TaskModel(
             id=task_id,
             name=name,
             goal_description=goal_description,
             instructions=instructions,
-            env_vars_json=safe_dumps(env_vars or {}),
+            env_vars_json=safe_dumps(env_vars_serialized),
             initial_urls_json=safe_dumps(initial_urls or []),
             browser_config_json=safe_dumps(browser_config or {}),
             status=TaskStatus.CREATED.value,

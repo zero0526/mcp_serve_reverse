@@ -16,6 +16,7 @@ from app.domain.trace.events import EventType
 from app.domain.trace.value_objects import EventEnvelope
 from app.infrastructure.config.settings import settings
 from app.infrastructure.serialization.json import safe_dumps, safe_loads
+from app.infrastructure.storage.blob_storage import default_blob_storage
 from app.ports.event_store import EventStorePort
 from app.ports.repositories import EventRepositoryPort
 
@@ -121,15 +122,22 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                     curr_headers.update(new_headers)
                     existing_req.headers_json = safe_dumps(curr_headers)
 
-                    if not existing_req.body_json and payload.get("body"):
-                        existing_req.body_json = safe_dumps(payload.get("body"))
-                    elif not existing_req.body_json and payload.get("post_data"):
-                        existing_req.body_json = safe_dumps(payload.get("post_data"))
+                    req_body_to_save = payload.get("body") or payload.get("post_data")
+                    if req_body_to_save:
+                        req_body_to_save, _ = default_blob_storage.offload_payload(
+                            req_body_to_save, session_id=event.session_id
+                        )
+                    if not existing_req.body_json and req_body_to_save:
+                        existing_req.body_json = safe_dumps(req_body_to_save)
 
                     if existing_req.status in (None, "placeholder"):
                         existing_req.status = "captured"
                 else:
                     body_val = payload.get("body") or payload.get("post_data")
+                    if body_val:
+                        body_val, _ = default_blob_storage.offload_payload(
+                            body_val, session_id=event.session_id
+                        )
                     req_record = NetworkRequestModel(
                         id=req_id,
                         session_id=event.session_id,
@@ -178,14 +186,20 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                 existing_res = (
                     await db.execute(select(NetworkResponseModel).where(NetworkResponseModel.request_id == req_id))
                 ).scalar_one_or_none()
+                raw_res_body = payload.get("body")
+                if raw_res_body:
+                    raw_res_body, _ = default_blob_storage.offload_payload(
+                        raw_res_body, session_id=event.session_id
+                    )
+
                 if existing_res:
                     if payload.get("status_code") is not None:
                         existing_res.status_code = payload.get("status_code")
                     curr_headers = safe_loads(existing_res.headers_json) or {}
                     curr_headers.update(payload.get("headers") or {})
                     existing_res.headers_json = safe_dumps(curr_headers)
-                    if not existing_res.body_json and payload.get("body"):
-                        existing_res.body_json = safe_dumps(payload.get("body"))
+                    if not existing_res.body_json and raw_res_body:
+                        existing_res.body_json = safe_dumps(raw_res_body)
                 else:
                     res_record = NetworkResponseModel(
                         id=f"res_{event.event_id}",
@@ -193,7 +207,7 @@ class SQLiteEventRepository(EventStorePort, EventRepositoryPort):
                         event_id=event.event_id,
                         status_code=payload.get("status_code"),
                         headers_json=safe_dumps(payload.get("headers", {})),
-                        body_json=safe_dumps(payload.get("body")) if payload.get("body") else None,
+                        body_json=safe_dumps(raw_res_body) if raw_res_body else None,
                         received_at_ns=event.timestamp_ns,
                         metadata_json=metadata_str,
                     )

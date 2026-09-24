@@ -38,7 +38,9 @@ from app.interfaces.mcp.tools.lineage import (
 from app.interfaces.mcp.tools.network import (
     analyze_request_lineage_tool,
     compare_requests_tool,
+    detect_security_challenges_tool,
     find_request_dependencies_tool,
+    get_blob_content_tool,
     list_requests_tool,
     summarize_request_tool,
 )
@@ -441,16 +443,50 @@ def create_mcp_server() -> MCPServer:
         session_id: str,
         method: str | None = None,
         url_keyword: str | None = None,
+        body_keyword: str | None = None,
+        friendly_name: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> dict[str, Any]:
-        """Liệt kê và lọc các HTTP request trong một session (hỗ trợ filter method, url keyword, pagination)."""
+        """Liệt kê và lọc các HTTP request trong một session (hỗ trợ filter method, url keyword, body keyword, friendly_name, pagination)."""
         return await list_requests_tool(
             session_id=session_id,
             method=method,
             url_keyword=url_keyword,
+            body_keyword=body_keyword,
+            friendly_name=friendly_name,
             limit=limit,
             offset=offset,
+        )
+
+    @server.tool()
+    async def detect_security_challenges(
+        session_id: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Tự động phát hiện các request bị chặn bởi thử thách bảo mật (Secured Action, 2FA, Captcha, Checkpoint) và chuỗi request giải quyết thử thách tiếp theo."""
+        return await detect_security_challenges_tool(
+            session_id=session_id,
+            request_id=request_id,
+        )
+
+    @server.tool()
+    async def get_blob_content(
+        session_id: str,
+        blob_id: str | None = None,
+        file_path: str | None = None,
+        format: str = "summary",
+        offset: int = 0,
+        max_bytes: int = 4096,
+    ) -> dict[str, Any]:
+        """Đọc và trích xuất nội dung của file media/blob (video, ảnh, binary, base64) đã được cách ly ra thư mục data/blobs/. Hỗ trợ định dạng summary (metadata), path (file path cho python script upload), base64, text."""
+        return await get_blob_content_tool(
+            session_id=session_id,
+            blob_id=blob_id,
+            file_path=file_path,
+            format=format,
+            offset=offset,
+            max_bytes=max_bytes,
         )
 
     # 6. Replay Engine Tools

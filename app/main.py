@@ -82,9 +82,10 @@ async def handle_run_mcp(args: argparse.Namespace, container: Any) -> None:
     print("=" * 60, file=sys.stderr)
 
     if args.transport == "stdio":
-        container.mcp_server.run(transport="stdio")
+        await container.mcp_server.run_stdio_async()
     else:
-        container.mcp_server.run(transport="sse", port=args.port)
+        port = int(args.port) if args.port else 8000
+        await container.mcp_server.run_sse_async(port=port)
 
 
 async def handle_capture(args: argparse.Namespace, container: Any) -> None:

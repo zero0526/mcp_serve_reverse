@@ -16,7 +16,8 @@ from app.adapters.persistence.sqlite.models import (
     NetworkResponseModel,
     TraceEventModel,
 )
-from app.infrastructure.serialization.json import safe_loads
+from app.infrastructure.serialization.json import parse_smart_payload, safe_loads
+from app.infrastructure.storage.blob_storage import default_blob_storage
 from app.interfaces.mcp.context import default_truncation_guard
 
 
@@ -89,12 +90,14 @@ async def get_request_resource(
         # Chuẩn bị dữ liệu thô
         req_headers = safe_loads(req.headers_json) if req.headers_json else {}
         req_query = safe_loads(req.query_json) if req.query_json else {}
-        req_body = safe_loads(req.body_json) if req.body_json else None
+        raw_req_body = parse_smart_payload(safe_loads(req.body_json)) if req.body_json else None
+        req_body, _ = default_blob_storage.offload_payload(raw_req_body, session_id=session_id) if raw_req_body is not None else (None, 0)
 
         res_info = None
         if res:
             res_headers = safe_loads(res.headers_json) if res.headers_json else {}
-            res_body = safe_loads(res.body_json) if res.body_json else None
+            raw_res_body = parse_smart_payload(safe_loads(res.body_json)) if res.body_json else None
+            res_body, _ = default_blob_storage.offload_payload(raw_res_body, session_id=session_id) if raw_res_body is not None else (None, 0)
             timing_ms = (
                 round((res.received_at_ns - req.started_at_ns) / 1_000_000, 2)
                 if (res.received_at_ns and req.started_at_ns)

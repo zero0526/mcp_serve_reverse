@@ -4,7 +4,7 @@ from typing import Any
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.session_repository import SQLiteSessionRepository
 from app.adapters.persistence.sqlite.task_repository import SQLiteTaskRepository
-from app.domain.task.entities import Task
+from app.domain.task.entities import Task, parse_env_vars
 from app.ports.repositories import SessionRepositoryPort
 from app.ports.task_repository import TaskRepositoryPort
 
@@ -26,7 +26,7 @@ class CreateTaskUseCase:
         name: str,
         goal_description: str = "",
         instructions: str = "",
-        env_vars: dict[str, Any] | None = None,
+        env_vars: dict[str, Any] | list[Any] | None = None,
         initial_urls: list[str] | None = None,
         browser_config: dict[str, Any] | None = None,
         task_id: str | None = None,
@@ -47,6 +47,9 @@ class CreateTaskUseCase:
             metadata=metadata,
         )
 
+        parsed_items = parse_env_vars(env_vars)
+        serialized_env_vars = [it.model_dump() for it in parsed_items]
+
         # 2. Với mỗi initial_url, khởi tạo sẵn 1 Session trong SessionRepository
         session_ids: list[str] = []
         for idx, url in enumerate(urls, start=1):
@@ -55,6 +58,7 @@ class CreateTaskUseCase:
                 "task_id": tid,
                 "url_index": idx,
                 "browser_config": browser_config or {},
+                "env_vars": serialized_env_vars,
             }
             await self.session_repo.create(
                 session_id=sid,

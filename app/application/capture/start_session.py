@@ -36,7 +36,7 @@ class StartSessionUseCase:
             meta["pre_seed_cookies_count"] = len(pre_seed_state.cookies)
             meta["pre_seed_storage_keys"] = list(pre_seed_state.storage.local_storage.keys())
         if options:
-            for opt_key in ("capture_options", "allowed_domains", "save_screenshots", "filter_static"):
+            for opt_key in ("capture_options", "allowed_domains", "save_screenshots", "filter_static", "env_vars"):
                 if opt_key in options:
                     meta[opt_key] = options[opt_key]
 

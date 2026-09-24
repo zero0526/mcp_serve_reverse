@@ -65,6 +65,7 @@ class BrowserSession:
         self,
         storage_seed_json: str | None = None,
         capture_options: dict[str, Any] | None = None,
+        env_vars_json: str | None = None,
     ) -> str:
         """Đọc và gộp các script instrumentation theo capture_options được chọn."""
         opts = capture_options or {}
@@ -95,6 +96,12 @@ class BrowserSession:
         if storage_seed_json:
             bundle_parts.append(
                 f"window.__api_lineage_seed_data__ = {storage_seed_json};\n"
+            )
+
+        # 2. Thêm danh sách env_vars cho in-page scripts
+        if env_vars_json:
+            bundle_parts.append(
+                f"window.__api_lineage_env_vars__ = {env_vars_json};\n"
             )
 
         # 2. Cấu hình nạp script có chọn lọc dựa trên capture_options
@@ -302,15 +309,79 @@ class BrowserSession:
                     args=["--disable-web-security", "--no-sandbox"],
                 )
 
+        # Trích xuất và phân loại env_vars & custom_headers
+        custom_headers = dict(opts.get("custom_headers") or {})
+        url_params = dict(opts.get("url_params") or {})
+        body_params = dict(opts.get("body_params") or {})
+
+        raw_env_vars = opts.get("env_vars") or []
+        for it in raw_env_vars:
+            if isinstance(it, dict) and "name" in it and "value" in it:
+                loc = str(it.get("location") or "header").lower().strip()
+                if loc in ("url", "param", "params", "query", "query_param", "url_param"):
+                    url_params[it["name"]] = str(it["value"])
+                elif loc in ("body", "json", "payload", "data"):
+                    body_params[it["name"]] = it["value"]
+                else:
+                    custom_headers[it["name"]] = str(it["value"])
+
         # Tạo context (hỗ trợ storage_state_path nếu người dùng cung cấp file sẵn)
         context_kwargs: dict[str, Any] = {
             "ignore_https_errors": True,
-            "viewport": {"width": 1280, "height": 800},
+            "viewport": {
+                "width": int(opts.get("viewport_width", 1280)),
+                "height": int(opts.get("viewport_height", 800)),
+            },
         }
+        if opts.get("user_agent"):
+            context_kwargs["user_agent"] = opts.get("user_agent")
+        if custom_headers:
+            context_kwargs["extra_http_headers"] = custom_headers
         if pre_seed_state and pre_seed_state.storage_state_path:
             context_kwargs["storage_state"] = pre_seed_state.storage_state_path
 
         self._context = await self._browser.new_context(**context_kwargs)
+
+        # Intercept route cho dynamic url_params và body_params nếu có
+        if url_params or body_params:
+            from app.domain.task.entities import append_query_params
+
+            async def _intercept_request_route(route):
+                req = route.request
+                if not req.url.startswith("http"):
+                    await route.continue_()
+                    return
+
+                mutated_url = req.url
+                if url_params:
+                    mutated_url = append_query_params(req.url, url_params)
+
+                mutated_post_data = None
+                headers = dict(req.headers)
+
+                if body_params and req.method.upper() in ("POST", "PUT", "PATCH"):
+                    content_type = headers.get("content-type", "").lower()
+                    post_data = req.post_data
+                    if "application/json" in content_type or (post_data and post_data.strip().startswith("{")):
+                        try:
+                            payload = json.loads(post_data) if post_data else {}
+                            if isinstance(payload, dict):
+                                payload.update(body_params)
+                                mutated_post_data = json.dumps(payload)
+                                headers["content-length"] = str(len(mutated_post_data.encode("utf-8")))
+                        except Exception:
+                            pass
+
+                continue_kwargs = {}
+                if mutated_url != req.url:
+                    continue_kwargs["url"] = mutated_url
+                if mutated_post_data is not None:
+                    continue_kwargs["post_data"] = mutated_post_data
+                    continue_kwargs["headers"] = headers
+
+                await route.continue_(**continue_kwargs)
+
+            await self._context.route("**/*", _intercept_request_route)
 
         # 1. PRE-SEED COOKIES nếu có
         if pre_seed_state and pre_seed_state.cookies:
@@ -335,8 +406,11 @@ class BrowserSession:
         ):
             storage_seed_json = json.dumps(pre_seed_state.storage.model_dump())
 
+        env_vars_json = json.dumps(raw_env_vars) if raw_env_vars else None
         capture_opts = opts.get("capture_options") or opts
-        bundle_code = self._load_instrumentation_bundle(storage_seed_json, capture_opts)
+        bundle_code = self._load_instrumentation_bundle(
+            storage_seed_json, capture_opts, env_vars_json=env_vars_json
+        )
         await self._context.add_init_script(bundle_code)
 
         # 3. THIẾT LẬP JS BRIDGE & NETWORK MAPPER
@@ -364,6 +438,9 @@ class BrowserSession:
 
         # 4. ĐIỀU HƯỚNG NẾU CÓ TARGET
         if target:
+            if url_params:
+                from app.domain.task.entities import append_query_params
+                target = append_query_params(target, url_params)
             try:
                 await self._page.goto(target, wait_until="domcontentloaded", timeout=30000)
             except Exception:

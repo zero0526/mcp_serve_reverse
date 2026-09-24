@@ -4,15 +4,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.adapters.persistence.sqlite.connection import AsyncSessionLocal
 from app.adapters.persistence.sqlite.models import NetworkRequestModel, NetworkResponseModel
-from app.infrastructure.serialization.json import safe_loads
+from app.infrastructure.serialization.json import parse_smart_payload, safe_loads
+from app.infrastructure.storage.blob_storage import default_blob_storage
 from app.interfaces.mcp.schemas.responses import redact_sensitive_payload
 
 
 class SummarizeRequestUseCase:
     """Use case tóm tắt chi tiết HTTP Request/Response và tự động che giấu thông tin nhạy cảm."""
 
-    def __init__(self, session_factory=AsyncSessionLocal):
+    def __init__(self, session_factory=AsyncSessionLocal, blob_storage=default_blob_storage):
         self.session_factory = session_factory
+        self.blob_storage = blob_storage
 
     async def execute(
         self,
@@ -33,7 +35,11 @@ class SummarizeRequestUseCase:
 
             headers = safe_loads(req.headers_json) if (include_headers and req.headers_json) else {}
             query = safe_loads(req.query_json) if req.query_json else {}
-            body = safe_loads(req.body_json) if req.body_json else None
+            raw_body = safe_loads(req.body_json) if req.body_json else None
+            body = parse_smart_payload(raw_body)
+            # Tự động cách ly các file media, video, ảnh, base64 lớn ra thư mục data/blobs
+            if body is not None and self.blob_storage:
+                body, _ = self.blob_storage.offload_payload(body, session_id=session_id)
 
             res_info = None
             if include_response:
@@ -43,7 +49,11 @@ class SummarizeRequestUseCase:
                 res = (await db.execute(res_stmt)).scalars().first()
                 if res:
                     res_headers = safe_loads(res.headers_json) if (include_headers and res.headers_json) else {}
-                    res_body = safe_loads(res.body_json) if res.body_json else None
+                    raw_res_body = safe_loads(res.body_json) if res.body_json else None
+                    res_body = parse_smart_payload(raw_res_body)
+                    if res_body is not None and self.blob_storage:
+                        res_body, _ = self.blob_storage.offload_payload(res_body, session_id=session_id)
+
                     res_info = {
                         "status_code": res.status_code,
                         "headers": redact_sensitive_payload(res_headers, mode=redaction_mode),

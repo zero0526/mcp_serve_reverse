@@ -6,7 +6,7 @@ from app.adapters.graph.stack_parser import StackFrame, parse_v8_stack
 from app.domain.graph.edges import EdgeEvidence, GraphEdge
 from app.domain.graph.nodes import GraphNode, NodeType
 from app.domain.graph.relations import RelationType
-from app.infrastructure.serialization.json import safe_dumps, safe_loads
+from app.infrastructure.serialization.json import parse_smart_payload, safe_dumps, safe_loads
 
 
 def _hash_val(val: Any) -> str:
@@ -16,11 +16,7 @@ def _hash_val(val: Any) -> str:
 
 def _flatten_leaves(data: Any, prefix: str = "") -> list[tuple[str, Any]]:
     """Đệ quy phân rã dictionary/list thành danh sách các cặp (path, leaf_value)."""
-    if isinstance(data, str) and (data.strip().startswith("{") or data.strip().startswith("[")):
-        try:
-            data = json.loads(data)
-        except Exception:
-            pass
+    data = parse_smart_payload(data)
 
     leaves: list[tuple[str, Any]] = []
     if isinstance(data, dict):
@@ -108,7 +104,8 @@ class GraphProjector:
             rnode_id = f"node_req_{session_id}_{req_id}"
             headers = safe_loads(req.get("headers_json")) if isinstance(req.get("headers_json"), str) else req.get("headers", {})
             query = safe_loads(req.get("query_json")) if isinstance(req.get("query_json"), str) else req.get("query", {})
-            body = safe_loads(req.get("body_json")) if isinstance(req.get("body_json"), str) else req.get("body")
+            raw_body = safe_loads(req.get("body_json")) if isinstance(req.get("body_json"), str) else req.get("body")
+            body = parse_smart_payload(raw_body)
 
             rnode = GraphNode(
                 id=rnode_id,
@@ -159,7 +156,7 @@ class GraphProjector:
                     "request_id": req_id,
                     "status_code": res.get("status_code"),
                     "headers": safe_loads(res.get("headers_json")) if isinstance(res.get("headers_json"), str) else res.get("headers", {}),
-                    "body": safe_loads(res.get("body_json")) if isinstance(res.get("body_json"), str) else res.get("body"),
+                    "body": parse_smart_payload(safe_loads(res.get("body_json")) if isinstance(res.get("body_json"), str) else res.get("body")),
                 },
             )
             nodes.append(res_node)

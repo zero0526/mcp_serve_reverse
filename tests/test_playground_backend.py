@@ -250,3 +250,41 @@ def test_evolution_api(client: TestClient):
     assert len(logs) >= 1
     assert logs[0]["task_id"] == task_id
     assert logs[0]["efficiency_rating"] == 5
+
+
+def test_task_env_vars_and_launch_integration(client: TestClient):
+    """Kiểm tra tạo task với cấu hình env_vars đa vị trí và xác nhận lúc launch session."""
+    payload = {
+        "name": "Integration Env Vars Reversal",
+        "goal_description": "Verify headers, URL params and body injection during launch",
+        "instructions": "Navigate and check lineage",
+        "env_vars": [
+            {"name": "X-Client-Signature", "value": "sig_alpha_999", "location": "header"},
+            {"name": "affiliate_code", "value": "aff_123", "location": "url"},
+            {"name": "tracking_id", "value": "trk_456", "location": "body"},
+        ],
+        "initial_urls": ["https://example.com/checkout"],
+        "browser_config": {
+            "headless": True,
+            "use_cloakbrowser": False,
+        },
+    }
+
+    # 1. POST /api/tasks
+    res = client.post("/api/tasks", json=payload)
+    assert res.status_code == 201
+    task_data = res.json()
+    task_id = task_data["id"]
+    session_id = task_data["session_ids"][0]
+
+    assert task_data["env_vars"]["X-Client-Signature"] == "sig_alpha_999"
+    assert "env_vars_items" in task_data
+    assert len(task_data["env_vars_items"]) == 3
+
+    # 2. POST /api/sessions/{session_id}/launch
+    launch_res = client.post(f"/api/sessions/{session_id}/launch")
+    assert launch_res.status_code == 200
+    launch_data = launch_res.json()
+    assert launch_data["success"] is True
+    assert launch_data["status"] == "RUNNING"
+

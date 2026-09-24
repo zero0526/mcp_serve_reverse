@@ -20,7 +20,8 @@ dissect cryptographic signatures & session tokens, and synthesize reproduction c
 | :--- | :--- | :--- |
 | **Inspect an assigned Task** | `get_task(task_id)` $\\rightarrow$ check goal, env vars & initial sessions | Starting capture blindly without inspecting task context |
 | **Discover captured sessions** | `list_sessions(task_id=...)` or `list_sessions(limit=10)` | Guessing session IDs |
-| **Find key API endpoints** | `list_requests(session_id, method="POST", url_keyword="...")` | Dumping raw trace events with `search_trace_events` |
+| **Find key API endpoints** | `list_requests(session_id, method="POST", friendly_name="...", body_keyword="...")` | Dumping raw trace events with `search_trace_events` |
+| **Detect Security Challenges (2FA, Captcha)** | `detect_security_challenges(session_id, request_id=...)` | Manually parsing error bodies to find OTP/challenge flows |
 | **Inspect request payload & headers** | `summarize_request(session_id, request_id, redaction_mode="strict")` | Requesting unredacted secrets unless strictly necessary |
 | **Find where a parameter/token originated** | `trace_origin(session_id, target_node_id)` $\\rightarrow$ `explain_lineage_path` | Guessing transformations manually |
 | **De-obfuscate encryption/hash/encoding** | `find_transformations(session_id, ...)` | Trying to reverse compiled WebAssembly without graph lineage |

@@ -26,6 +26,7 @@ def task_to_dict(task: Task) -> dict[str, Any]:
         "goal_description": task.goal_description,
         "instructions": task.instructions,
         "env_vars": task.env_vars or {},
+        "env_vars_items": [item.model_dump() for item in task.parsed_env_vars],
         "initial_urls": task.initial_urls or [],
         "browser_config": b_conf_dict,
         "status": status_str,
