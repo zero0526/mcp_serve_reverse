@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "api_lineage": {
-      "command": ".venv/bin/python",
+      "command": "d:\\source_code\\mcp_serve_reverse\\.venv\\Scripts\\python.exe",
       "args": [
         "-m",
         "app.main",
@@ -10,7 +10,7 @@
         "stdio"
       ],
       "env": {
-        "PYTHONPATH": ".",
+        "PYTHONPATH": "d:\\source_code\\mcp_serve_reverse",
         "PYTHONIOENCODING": "utf-8"
       }
     }

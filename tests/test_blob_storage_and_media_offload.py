@@ -10,13 +10,15 @@ from app.application.network.summarize_request import SummarizeRequestUseCase
 from app.infrastructure.storage.blob_storage import (
     BlobStorageManager,
     default_blob_storage,
+    detect_file_details,
     detect_mime_and_extension,
+    detect_mime_and_extension_from_file,
 )
 from app.interfaces.mcp.tools.network import get_blob_content_tool
 
 
 def test_detect_mime_and_extension():
-    # JPEG magic bytes
+    # JPEG magic bytes (puremagic detects and normalizes to .jpg)
     jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 20
     mime, ext = detect_mime_and_extension(jpeg_bytes)
     assert mime == "image/jpeg"
@@ -39,6 +41,49 @@ def test_detect_mime_and_extension():
     mime, ext = detect_mime_and_extension(pdf_bytes)
     assert mime == "application/pdf"
     assert ext == ".pdf"
+
+    # WebP magic bytes
+    webp_bytes = b"RIFF\x20\x00\x00\x00WEBPVP8 " + b"\x00" * 20
+    mime, ext = detect_mime_and_extension(webp_bytes)
+    assert mime == "image/webp"
+    assert ext == ".webp"
+
+    # Audio WAV
+    wav_bytes = b"RIFF\x24\x00\x00\x00WAVEfmt " + b"\x00" * 20
+    mime, ext = detect_mime_and_extension(wav_bytes)
+    assert mime == "audio/wav"
+    assert ext == ".wav"
+
+    # GIF magic bytes
+    gif_bytes = b"GIF89a\x01\x00\x01\x00" + b"\x00" * 20
+    mime, ext = detect_mime_and_extension(gif_bytes)
+    assert mime == "image/gif"
+    assert ext == ".gif"
+
+    # Unknown random bytes fallback
+    random_bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x10\x11\x12\x13\x14"
+    mime, ext = detect_mime_and_extension(random_bytes)
+    assert mime == "application/octet-stream"
+    assert ext == ".bin"
+
+
+def test_detect_puremagic_from_file_and_details(tmp_path):
+    # Test detect_mime_and_extension_from_file
+    sample_png = tmp_path / "sample.png"
+    sample_png.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + b"\x00" * 30)
+
+    mime, ext = detect_mime_and_extension_from_file(sample_png)
+    assert mime == "image/png"
+    assert ext == ".png"
+
+    # Test detect_file_details
+    details = detect_file_details(sample_png)
+    assert len(details) > 0
+    top = details[0]
+    assert top["extension"] == ".png"
+    assert top["mime_type"] == "image/png"
+    assert top["confidence"] > 0
+    assert "name" in top
 
 
 def test_offload_data_uri_and_raw_base64(tmp_path):

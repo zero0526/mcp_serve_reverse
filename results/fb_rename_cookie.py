@@ -80,16 +80,36 @@ async def fetch_tokens_from_page(
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36"
+            "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36"
         ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": (
+            "text/html,application/xhtml+xml,application/xml;q=0.9,"
+            "image/avif,image/webp,image/apng,*/*;q=0.8,"
+            "application/signed-exchange;v=b3;q=0.7"
+        ),
         "Accept-Language": "en-US,en;q=0.9",
+        "Priority": "u=0, i",
+        "Sec-Ch-Prefers-Color-Scheme": "light",
+        "Sec-Ch-Ua": '"Google Chrome";v="153", "Not_A Brand";v="8", "Chromium";v="153"',
+        "Sec-Ch-Ua-Full-Version-List": (
+            '"Google Chrome";v="153.0.8010.50", "Not_A Brand";v="8.0.0.0", "Chromium";v="153.0.8010.50"'
+        ),
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Model": '""',
+        "Sec-Ch-Ua-Platform": '"Windows"',
+        "Sec-Ch-Ua-Platform-Version": '"19.0.0"',
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+        "Upgrade-Insecure-Requests": "1",
+        "Dpr": "1",
+        "Viewport-Width": "1365",
         "Cookie": cookie_string,
     }
 
     resp = await client.get(url, headers=headers, follow_redirects=True)
     html = resp.text
-
     # 1. Trích xuất fb_dtsg
     dtsg_match = re.search(r'"DTSGInitialData"[^\}]*?"token":"([^"]+)"', html)
     fb_dtsg = dtsg_match.group(1) if dtsg_match else None

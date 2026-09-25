@@ -13,9 +13,13 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+
+import puremagic
+
 from app.infrastructure.config.settings import settings
+
 # Đường dẫn mặc định thư mục lưu trữ blob
-DEFAULT_BLOB_DIR = Path("/data/projects/web-apps/cli/mcp_server_reverse/data/blobs")
+DEFAULT_BLOB_DIR = settings.data_dir / "blobs"
 
 # Regex nhận diện Data URI Base64: data:image/png;base64,iVBORw...
 DATA_URI_REGEX = re.compile(
@@ -23,8 +27,8 @@ DATA_URI_REGEX = re.compile(
     re.DOTALL,
 )
 
-# Magic bytes nhận diện định dạng file media phổ biến
-MAGIC_NUMBERS: list[tuple[bytes, str, str]] = [
+# Fallback magic bytes nếu puremagic không nhận diện được (ví dụ stream cắt ngắn hoặc buffer không đủ)
+FALLBACK_MAGIC_NUMBERS: list[tuple[bytes, str, str]] = [
     (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
     (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
     (b"GIF87a", "image/gif", ".gif"),
@@ -38,12 +42,63 @@ MAGIC_NUMBERS: list[tuple[bytes, str, str]] = [
     (b"\xff\xf3", "audio/mpeg", ".mp3"),
     (b"\xff\xf2", "audio/mpeg", ".mp3"),
     (b"OggS", "audio/ogg", ".ogg"),
-    (b"RIFF", "audio/wav", ".wav"),  # Cần kiểm tra WAVE hoặc WEBP
 ]
 
 
-def detect_mime_and_extension(data_bytes: bytes) -> tuple[str, str]:
-    """Nhận diện MIME type và đuôi file dựa trên Magic Bytes."""
+def _normalize_puremagic_match(
+    match: puremagic.PureMagicWithConfidence,
+    data_bytes: bytes | None = None,
+) -> tuple[str, str]:
+    """Chuẩn hóa MIME type và extension từ puremagic để tương thích tốt nhất với hệ sinh thái web."""
+    mime = (match.mime_type or "").strip()
+    ext = (match.extension or "").strip()
+
+    if ext and not ext.startswith("."):
+        ext = f".{ext}"
+
+    # 1. JPEG: puremagic trả về .jfif, .jpe, chuẩn hóa về .jpg
+    if mime == "image/jpeg" or ext in (".jfif", ".jpe", ".jpeg", ".jpg"):
+        return "image/jpeg", ".jpg"
+
+    # 2. Audio WAV: puremagic trả về audio/wave, chuẩn hóa về audio/wav
+    if mime in ("audio/wave", "audio/wav") or ext == ".wav":
+        return "audio/wav", ".wav"
+
+    # 3. Gzip: chuẩn hóa mime
+    if mime in ("application/x-gzip", "application/gzip") or ext == ".gz":
+        return "application/gzip", ".gz"
+
+    # 4. ZIP generic: nếu là PK\x03\x04 nhưng không có metadata của Office XML hay JAR
+    if data_bytes and data_bytes.startswith(b"PK\x03\x04"):
+        if b"[Content_Types].xml" not in data_bytes and b"META-INF" not in data_bytes:
+            return "application/zip", ".zip"
+
+    # 5. MP3 audio
+    if mime == "audio/mpeg" or ext in (".mp3", ".mpga"):
+        return "audio/mpeg", ".mp3"
+
+    if not mime:
+        mime = "application/octet-stream"
+    if not ext:
+        ext = ".bin"
+
+    return mime, ext
+
+
+def detect_mime_and_extension(data_bytes: bytes, filename: str | None = None) -> tuple[str, str]:
+    """Nhận diện MIME type và đuôi file từ mảng bytes sử dụng puremagic (kèm fallback an toàn)."""
+    if not data_bytes:
+        return "application/octet-stream", ".bin"
+
+    # 1. Sử dụng puremagic.magic_string để phát hiện định dạng chính xác với confidence ranking
+    try:
+        matches = puremagic.magic_string(data_bytes, filename=filename)
+        if matches:
+            return _normalize_puremagic_match(matches[0], data_bytes=data_bytes)
+    except Exception:
+        pass
+
+    # 2. Fallback thủ công nếu dữ liệu quá ngắn hoặc puremagic không nhận diện được
     if len(data_bytes) >= 12 and data_bytes[:4] == b"RIFF":
         if data_bytes[8:12] == b"WEBP":
             return "image/webp", ".webp"
@@ -51,14 +106,64 @@ def detect_mime_and_extension(data_bytes: bytes) -> tuple[str, str]:
             return "audio/wav", ".wav"
 
     if len(data_bytes) >= 8 and data_bytes[4:8] == b"ftyp":
-        # MP4 container
         return "video/mp4", ".mp4"
 
-    for magic, mime, ext in MAGIC_NUMBERS:
+    for magic, mime, ext in FALLBACK_MAGIC_NUMBERS:
         if data_bytes.startswith(magic):
             return mime, ext
 
     return "application/octet-stream", ".bin"
+
+
+def detect_mime_and_extension_from_file(file_path: os.PathLike | str) -> tuple[str, str]:
+    """Nhận diện MIME type và đuôi file của một file vật lý trên đĩa bằng puremagic.magic_file."""
+    p = Path(file_path)
+    if not p.is_file():
+        return "application/octet-stream", ".bin"
+
+    try:
+        matches = puremagic.magic_file(str(p))
+        if matches:
+            header_sample = p.read_bytes()[:1024] if p.stat().st_size > 0 else None
+            return _normalize_puremagic_match(matches[0], data_bytes=header_sample)
+    except Exception:
+        pass
+
+    # Fallback đọc bytes nếu magic_file gặp lỗi
+    try:
+        sample = p.read_bytes()[:2048]
+        return detect_mime_and_extension(sample, filename=p.name)
+    except Exception:
+        return "application/octet-stream", ".bin"
+
+
+def detect_file_details(
+    data_or_file: bytes | os.PathLike | str,
+    is_file: bool = False,
+    filename: str | None = None,
+) -> list[dict[str, Any]]:
+    """Phân tích chi tiết tất cả các định dạng tiềm năng với độ tin cậy (confidence) từ puremagic."""
+    matches = []
+    try:
+        if is_file or (isinstance(data_or_file, (str, Path)) and Path(data_or_file).is_file()):
+            matches = puremagic.magic_file(str(data_or_file))
+        elif isinstance(data_or_file, bytes):
+            matches = puremagic.magic_string(data_or_file, filename=filename)
+        elif hasattr(data_or_file, "read"):
+            matches = puremagic.magic_stream(data_or_file)
+    except Exception:
+        return []
+
+    return [
+        {
+            "extension": m.extension,
+            "mime_type": m.mime_type,
+            "name": m.name,
+            "confidence": m.confidence,
+            "offset": m.offset,
+        }
+        for m in matches
+    ]
 
 
 def is_probable_base64_media(s: str) -> tuple[bool, bytes | None, str, str]:
@@ -302,7 +407,7 @@ class BlobStorageManager:
             }
 
         file_size = target_path.stat().st_size
-        mime, ext = detect_mime_and_extension(target_path.read_bytes()[:64])
+        mime, ext = detect_mime_and_extension_from_file(target_path)
 
         if format == "path":
             return {
